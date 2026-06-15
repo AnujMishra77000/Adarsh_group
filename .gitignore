@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Logs and artifacts
+*.log
+coverage/
+backend/uploads/
+backend/generated/
