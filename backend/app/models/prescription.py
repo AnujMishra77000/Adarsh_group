@@ -14,6 +14,7 @@ class Prescription(Base, TimestampMixin, UserTrackingMixin, SoftDeleteMixin):
     __tablename__ = "prescriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
     prescription_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
 
@@ -31,5 +32,7 @@ class Prescription(Base, TimestampMixin, UserTrackingMixin, SoftDeleteMixin):
     add_power: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     pd: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    shop = relationship("Shop", back_populates="prescriptions")
     customer = relationship("Customer", back_populates="prescriptions")

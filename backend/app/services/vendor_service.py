@@ -12,10 +12,11 @@ from app.services.audit_service import AuditService
 
 
 class VendorService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, shop_key: str):
         self.db = db
+        self.shop_key = shop_key
         self.repo = VendorRepository(db)
-        self.audit_service = AuditService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
 
     def list_vendors(
         self,
@@ -24,7 +25,13 @@ class VendorService:
         search: str | None,
         is_active: bool | None,
     ) -> VendorListResponse:
-        items, total = self.repo.list(page=page, page_size=page_size, search=search, is_active=is_active)
+        items, total = self.repo.list(
+            page=page,
+            page_size=page_size,
+            shop_key=self.shop_key,
+            search=search,
+            is_active=is_active,
+        )
         return VendorListResponse(
             items=[VendorRead.model_validate(item) for item in items],
             total=total,
@@ -42,7 +49,7 @@ class VendorService:
         )
 
         try:
-            self.repo.create(vendor)
+            self.repo.create(vendor, shop_key=self.shop_key)
             self.audit_service.log(
                 actor_user_id=actor.id,
                 action="vendor.create",
@@ -63,13 +70,13 @@ class VendorService:
         return VendorRead.model_validate(vendor)
 
     def get_vendor(self, vendor_id: int) -> VendorRead:
-        vendor = self.repo.get_by_id(vendor_id)
+        vendor = self.repo.get_by_id(vendor_id, shop_key=self.shop_key)
         if not vendor:
             raise AppException(status_code=404, code="vendor_not_found", message="Vendor not found")
         return VendorRead.model_validate(vendor)
 
     def update_vendor(self, vendor_id: int, payload: VendorUpdate, actor: User) -> VendorRead:
-        vendor = self.repo.get_by_id(vendor_id)
+        vendor = self.repo.get_by_id(vendor_id, shop_key=self.shop_key)
         if not vendor:
             raise AppException(status_code=404, code="vendor_not_found", message="Vendor not found")
 
@@ -86,7 +93,7 @@ class VendorService:
             setattr(vendor, field, value)
 
         try:
-            self.repo.save(vendor)
+            self.repo.save(vendor, shop_key=self.shop_key)
             self.audit_service.log(
                 actor_user_id=actor.id,
                 action="vendor.update",
@@ -104,7 +111,7 @@ class VendorService:
         return VendorRead.model_validate(vendor)
 
     def delete_vendor(self, vendor_id: int, actor: User) -> None:
-        vendor = self.repo.get_by_id(vendor_id)
+        vendor = self.repo.get_by_id(vendor_id, shop_key=self.shop_key)
         if not vendor:
             raise AppException(status_code=404, code="vendor_not_found", message="Vendor not found")
 
@@ -112,7 +119,7 @@ class VendorService:
             return
 
         vendor.is_active = False
-        self.repo.save(vendor)
+        self.repo.save(vendor, shop_key=self.shop_key)
         self.audit_service.log(
             actor_user_id=actor.id,
             action="vendor.deactivate",

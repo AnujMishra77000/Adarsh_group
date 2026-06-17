@@ -7,11 +7,13 @@ from app.core.security import get_password_hash
 from app.core.shops import DEFAULT_SHOP_KEY
 from app.models.enums import UserRole
 from app.repositories.user_repository import UserRepository
+from app.scripts.seed import seed_shops
 
 
 def init_db(db: Session) -> None:
+    seed_shops(db)
     user_repo = UserRepository(db)
-    bootstrap_email = "admin@aadarsh-eye.local"
+    bootstrap_email = "admin@adarsh-optical.local"
 
     if user_repo.get_by_email(bootstrap_email):
         return

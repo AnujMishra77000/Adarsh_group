@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.core.exceptions import AppException
+from app.core.shops import VALID_SHOP_CODES, VALID_SHOP_KEYS, get_canonical_shop_code, get_shop_aliases, normalize_shop_code
 
 
 def _build_engine_kwargs(database_uri: str) -> dict[str, Any]:
@@ -25,29 +26,64 @@ def _build_engine_kwargs(database_uri: str) -> dict[str, Any]:
 
 class TenantDBManager:
     def __init__(self, shop_databases: dict[str, str]):
-        self._shop_databases = {key.strip().lower(): value for key, value in shop_databases.items()}
+        self._shop_databases: dict[str, str] = {}
+        self._canonical_to_database_key: dict[str, str] = {}
+        self._accepted_shop_codes: set[str] = set()
+
+        for raw_shop_code, database_uri in shop_databases.items():
+            database_key = normalize_shop_code(raw_shop_code)
+            if not database_key:
+                continue
+
+            self._shop_databases[database_key] = database_uri
+
+            canonical_code = get_canonical_shop_code(database_key) or database_key
+            existing_database_key = self._canonical_to_database_key.get(canonical_code)
+            if existing_database_key is not None and existing_database_key != database_key:
+                raise ValueError(
+                    "SHOP_DATABASES contains multiple entries for the same shop: "
+                    f"{existing_database_key!r} and {database_key!r}"
+                )
+
+            self._canonical_to_database_key[canonical_code] = database_key
+            self._accepted_shop_codes.update(get_shop_aliases(canonical_code))
+            self._accepted_shop_codes.add(database_key)
+
         self._engines: dict[str, Engine] = {}
         self._sessionmakers: dict[str, sessionmaker[Session]] = {}
         self._lock = Lock()
 
     @property
     def shop_codes(self) -> set[str]:
+        if not self._shop_databases:
+            return set(VALID_SHOP_KEYS)
+        return set(self._accepted_shop_codes)
+
+    @property
+    def database_shop_codes(self) -> set[str]:
+        if not self._shop_databases:
+            return set(VALID_SHOP_CODES)
         return set(self._shop_databases.keys())
 
     def validate_shop_code(self, shop_code: str) -> str:
-        if not self._shop_databases:
-            raise AppException(
-                status_code=500,
-                code="shop_database_mapping_missing",
-                message="SHOP_DATABASES configuration is missing",
-            )
-
-        normalized = shop_code.strip().lower()
+        normalized = normalize_shop_code(shop_code)
         if not normalized:
             raise AppException(status_code=400, code="missing_shop_code", message="Shop context is required")
-        if normalized not in self._shop_databases:
+
+        if not self._shop_databases:
+            canonical_code = get_canonical_shop_code(normalized)
+            if canonical_code is None:
+                raise AppException(status_code=400, code="invalid_shop_code", message="Invalid shop context")
+            return canonical_code
+
+        if normalized in self._shop_databases:
+            return normalized
+
+        canonical_code = get_canonical_shop_code(normalized) or normalized
+        database_key = self._canonical_to_database_key.get(canonical_code)
+        if database_key is None:
             raise AppException(status_code=400, code="invalid_shop_code", message="Invalid shop context")
-        return normalized
+        return database_key
 
     def _ensure_sessionmaker(self, shop_code: str) -> sessionmaker[Session]:
         validated_shop = self.validate_shop_code(shop_code)
@@ -75,10 +111,19 @@ class TenantDBManager:
 
     def get_engine(self, shop_code: str) -> Engine:
         validated_shop = self.validate_shop_code(shop_code)
+        if not self._shop_databases:
+            from app.db.session import engine
+
+            return engine
         self._ensure_sessionmaker(validated_shop)
         return self._engines[validated_shop]
 
     def get_session(self, shop_code: str) -> Session:
+        if not self._shop_databases:
+            self.validate_shop_code(shop_code)
+            from app.db.session import SessionLocal
+
+            return SessionLocal()
         maker = self._ensure_sessionmaker(shop_code)
         return maker()
 

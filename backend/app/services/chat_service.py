@@ -36,9 +36,9 @@ class ChatService:
         self.storage_root = settings.chat_storage_root_path
         self.storage_root.mkdir(parents=True, exist_ok=True)
 
-    def list_messages(self, limit: int, before_id: int | None = None) -> tuple[list[ChatMessageRead], bool]:
+    def list_messages(self, limit: int, actor: User, before_id: int | None = None) -> tuple[list[ChatMessageRead], bool]:
         safe_limit = max(1, min(limit, 100))
-        rows = self.repo.list_recent(limit=safe_limit + 1, before_id=before_id)
+        rows = self.repo.list_recent(limit=safe_limit + 1, shop_key=actor.shop_key, before_id=before_id)
         has_more = len(rows) > safe_limit
         visible_rows = rows[:safe_limit]
 
@@ -88,6 +88,7 @@ class ChatService:
         normalized_original_name = self._normalize_filename(file_name)
         normalized_content_type = (content_type or "application/octet-stream").strip().lower()
 
+        shop_storage_root = self._shop_storage_root(actor.shop_key)
         storage_name = self._build_storage_name(normalized_original_name)
         payload_to_store = file_bytes
         is_compressed = False
@@ -99,7 +100,8 @@ class ChatService:
                 is_compressed = True
                 storage_name = f"{storage_name}.gz"
 
-        destination = self.storage_root / storage_name
+        attachment_storage_name = f"{self._shop_storage_dir_name(actor.shop_key)}/{storage_name}"
+        destination = shop_storage_root / storage_name
         destination.write_bytes(payload_to_store)
 
         message = ChatMessage(
@@ -109,7 +111,7 @@ class ChatService:
             sender_shop_key=actor.shop_key,
             message_text=normalized_text,
             attachment_original_name=normalized_original_name,
-            attachment_storage_name=storage_name,
+            attachment_storage_name=attachment_storage_name,
             attachment_content_type=normalized_content_type,
             attachment_size_bytes=len(file_bytes),
             attachment_stored_bytes=len(payload_to_store),
@@ -122,8 +124,11 @@ class ChatService:
         self.db.refresh(message)
         return self._to_read_schema(message)
 
-    def get_attachment_for_download(self, message_id: int) -> tuple[ChatMessage, bytes, str]:
-        message = self.repo.get_by_id(message_id)
+    def get_attachment_for_download(self, message_id: int, actor: User) -> tuple[ChatMessage, bytes, str]:
+        if not actor.is_active:
+            raise AppException(status_code=403, code="chat_download_forbidden", message="Chat download is forbidden")
+
+        message = self.repo.get_by_id(message_id, shop_key=actor.shop_key)
         if message is None:
             raise AppException(status_code=404, code="chat_message_not_found", message="Chat message not found")
 
@@ -134,7 +139,7 @@ class ChatService:
                 message="This chat message does not contain an attachment",
             )
 
-        file_path = self.storage_root / message.attachment_storage_name
+        file_path = self._resolve_attachment_path(message.attachment_storage_name, actor.shop_key)
         if not file_path.exists() or not file_path.is_file():
             raise AppException(status_code=404, code="chat_file_not_found", message="Attachment file not found on server")
 
@@ -195,6 +200,33 @@ class ChatService:
         if not candidate:
             candidate = "attachment"
         return candidate[:180]
+
+    def _shop_storage_root(self, shop_key: str) -> Path:
+        shop_root = self.storage_root / self._shop_storage_dir_name(shop_key)
+        shop_root.mkdir(parents=True, exist_ok=True)
+        return shop_root
+
+    def _resolve_attachment_path(self, storage_name: str, shop_key: str) -> Path:
+        if "/" not in storage_name and "\\" not in storage_name:
+            legacy_name = Path(storage_name).name
+            if legacy_name != storage_name:
+                raise AppException(status_code=404, code="chat_file_not_found", message="Attachment file not found on server")
+            return (self.storage_root / legacy_name).resolve()
+
+        file_path = (self.storage_root / storage_name).resolve()
+        try:
+            file_path.relative_to(self._shop_storage_root(shop_key).resolve())
+        except ValueError as exc:
+            raise AppException(status_code=404, code="chat_file_not_found", message="Attachment file not found on server") from exc
+        return file_path
+
+    @staticmethod
+    def _shop_storage_dir_name(shop_key: str) -> str:
+        candidate = _SAFE_FILENAME_PATTERN.sub("_", shop_key.strip().lower())
+        candidate = candidate.strip("._")
+        if not candidate:
+            return "unknown-shop"
+        return candidate[:80]
 
     @staticmethod
     def _build_storage_name(original_name: str) -> str:

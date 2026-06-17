@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_shop_key, require_roles
@@ -112,6 +113,18 @@ def generate_prescription_pdf(
 ) -> PrescriptionPdfResponse:
     service = PrescriptionService(db, shop_key=shop_key)
     return service.generate_pdf(prescription_id=prescription_id, actor=current_user)
+
+
+@router.get("/{prescription_id}/pdf/download")
+def download_prescription_pdf(
+    prescription_id: int,
+    db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+) -> FileResponse:
+    service = PrescriptionService(db, shop_key=shop_key)
+    pdf_file = service.get_pdf_file_for_download(prescription_id=prescription_id, actor=current_user)
+    return FileResponse(path=pdf_file, media_type="application/pdf", filename=pdf_file.name)
 
 
 @router.post("/{prescription_id}/send-vendor", response_model=PrescriptionSendVendorResponse)

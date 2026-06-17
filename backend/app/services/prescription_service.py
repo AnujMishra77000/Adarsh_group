@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import AppException
 from app.models.prescription import Prescription
 from app.models.user import User
@@ -20,6 +23,7 @@ from app.schemas.prescription import (
     PrescriptionUpdate,
 )
 from app.services.audit_service import AuditService
+from app.services.document_file_service import build_media_file_reference, resolve_media_file_reference
 from app.services.prescription_pdf_service import PrescriptionPdfService
 from app.services.whatsapp_service import WhatsAppService
 
@@ -31,9 +35,31 @@ class PrescriptionService:
         self.repo = PrescriptionRepository(db)
         self.customer_repo = CustomerRepository(db)
         self.vendor_repo = VendorRepository(db)
-        self.audit_service = AuditService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
         self.pdf_service = PrescriptionPdfService()
-        self.whatsapp_service = WhatsAppService(db)
+        self.whatsapp_service = WhatsAppService(db, shop_key=shop_key)
+
+    @staticmethod
+    def _prescription_pdf_download_url(prescription_id: int) -> str:
+        return f"{settings.api_v1_prefix}/prescriptions/{prescription_id}/pdf/download"
+
+    @staticmethod
+    def _has_pdf_reference(prescription: Prescription) -> bool:
+        return bool(prescription.pdf_file_path and prescription.pdf_file_path.strip())
+
+    def _resolve_prescription_pdf_file(self, prescription: Prescription) -> Path:
+        return resolve_media_file_reference(
+            prescription.pdf_file_path,
+            allowed_dir=settings.prescription_media_dir,
+            invalid_code="invalid_prescription_pdf_file_reference",
+            missing_code="prescription_pdf_not_found",
+            missing_message="Prescription PDF file not found on server",
+        )
+
+    def _set_prescription_pdf_file(self, prescription: Prescription, file_path: Path) -> str:
+        file_reference = build_media_file_reference(file_path)
+        prescription.pdf_file_path = file_reference
+        return file_reference
 
     def _serialize(self, prescription: Prescription) -> PrescriptionRead:
         customer = prescription.customer
@@ -101,6 +127,20 @@ class PrescriptionService:
     def get_prescription(self, prescription_id: int) -> PrescriptionRead:
         prescription = self._get_prescription_or_404(prescription_id)
         return self._serialize(prescription)
+
+    def get_pdf_file_for_download(self, prescription_id: int, actor: User) -> Path:
+        if actor.shop_key != self.shop_key:
+            raise AppException(status_code=403, code="invalid_shop_access", message="Invalid shop access")
+
+        prescription = self._get_prescription_or_404(prescription_id)
+        if not self._has_pdf_reference(prescription):
+            raise AppException(
+                status_code=422,
+                code="prescription_pdf_missing",
+                message="Prescription PDF has not been generated",
+            )
+
+        return self._resolve_prescription_pdf_file(prescription)
 
     def create_prescription(self, payload: PrescriptionCreate, actor: User) -> PrescriptionRead:
         customer = self.customer_repo.get_by_id(payload.customer_id, shop_key=self.shop_key)
@@ -216,17 +256,27 @@ class PrescriptionService:
             customer=customer,
             staff_name=actor.full_name or actor.email,
         )
+        pdf_reference = self._set_prescription_pdf_file(prescription, generated.file_path)
+        prescription.updated_by = actor.id
+        self.repo.save(prescription)
 
         self.audit_service.log(
             actor_user_id=actor.id,
             action="prescription.generate_pdf",
             entity_type="prescription",
             entity_id=str(prescription.id),
-            new_values={"pdf_url": generated.public_url},
+            new_values={
+                "pdf_file_path": pdf_reference,
+                "pdf_url": self._prescription_pdf_download_url(prescription.id),
+            },
         )
         self.db.commit()
+        self.db.refresh(prescription)
 
-        return PrescriptionPdfResponse(prescription_id=prescription.id, pdf_url=generated.public_url)
+        return PrescriptionPdfResponse(
+            prescription_id=prescription.id,
+            pdf_url=self._prescription_pdf_download_url(prescription.id),
+        )
 
     def send_to_vendor(
         self,
@@ -239,7 +289,7 @@ class PrescriptionService:
         if not customer:
             raise AppException(status_code=404, code="customer_not_found", message="Customer not found")
 
-        vendor = self.vendor_repo.get_by_id(payload.vendor_id)
+        vendor = self.vendor_repo.get_by_id(payload.vendor_id, shop_key=self.shop_key)
         if not vendor:
             raise AppException(status_code=404, code="vendor_not_found", message="Vendor not found")
         if not vendor.is_active:
@@ -250,6 +300,9 @@ class PrescriptionService:
             customer=customer,
             staff_name=actor.full_name or actor.email,
         )
+        pdf_reference = self._set_prescription_pdf_file(prescription, generated.file_path)
+        prescription.updated_by = actor.id
+        self.repo.save(prescription)
 
         media_id = self.whatsapp_service.upload_media(generated.file_path)
         caption = payload.caption or (
@@ -280,6 +333,7 @@ class PrescriptionService:
                 "provider_message_id": result.provider_message_id,
                 "status": result.status.value,
                 "error_message": result.error_message,
+                "pdf_file_path": pdf_reference,
             },
         )
         self.db.commit()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.db.shop_scope import assign_shop_scope, shop_filter
 from app.models.enums import UserRole
 from app.models.user import User
 
@@ -17,13 +18,14 @@ class UserRepository:
     def get_staff_by_id(self, user_id: int, shop_key: str | None = None) -> User | None:
         query = self.db.query(User).filter(User.id == user_id, User.role == UserRole.STAFF)
         if shop_key is not None:
-            query = query.filter(User.shop_key == shop_key)
+            query = query.filter(shop_filter(self.db, User, shop_key))
         return query.first()
 
     def get_by_email(self, email: str, shop_key: str | None = None) -> User | None:
-        query = self.db.query(User).filter(User.email == email.lower())
+        normalized_email = email.strip().lower()
+        query = self.db.query(User).filter(User.email == normalized_email)
         if shop_key is not None:
-            query = query.filter(User.shop_key == shop_key)
+            query = query.filter(shop_filter(self.db, User, shop_key))
         return query.first()
 
     def exists_admin(self) -> bool:
@@ -37,7 +39,7 @@ class UserRepository:
         search: str | None = None,
         is_active: bool | None = None,
     ) -> tuple[list[User], int]:
-        query = self.db.query(User).filter(User.role == UserRole.STAFF, User.shop_key == shop_key)
+        query = self.db.query(User).filter(User.role == UserRole.STAFF, shop_filter(self.db, User, shop_key))
 
         if is_active is not None:
             query = query.filter(User.is_active.is_(is_active))
@@ -70,18 +72,20 @@ class UserRepository:
         is_active: bool = True,
     ) -> User:
         user = User(
-            email=email.lower(),
+            email=email.strip().lower(),
             full_name=full_name,
             password_hash=password_hash,
             role=role,
             shop_key=shop_key,
             is_active=is_active,
         )
+        assign_shop_scope(user, self.db, shop_key)
         self.db.add(user)
         self.db.flush()
         return user
 
     def save(self, user: User) -> User:
+        assign_shop_scope(user, self.db, user.shop_key)
         self.db.add(user)
         self.db.flush()
         return user

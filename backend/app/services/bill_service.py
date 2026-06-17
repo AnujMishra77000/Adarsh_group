@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from urllib.parse import urlparse
 
 import structlog
 from sqlalchemy.exc import IntegrityError
@@ -12,14 +11,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.shops import get_shop_name
-from app.models.bill import Bill
+from app.models.bill import Bill, BillItem, Payment
 from app.models.customer import Customer
-from app.models.enums import PaymentStatus, WhatsAppModuleType, WhatsAppStatus
+from app.models.enums import BillItemType, PaymentMode, PaymentStatus, WhatsAppModuleType, WhatsAppStatus
 from app.models.user import User
 from app.repositories.bill_repository import BillRepository
 from app.repositories.customer_repository import CustomerRepository
-from app.schemas.bill import BillCreate, BillListResponse, BillRead, BillUpdate
+from app.schemas.bill import BillCreate, BillItemCreate, BillListResponse, BillPaymentCreate, BillRead, BillUpdate
 from app.services.audit_service import AuditService
+from app.services.document_file_service import build_media_file_reference, resolve_media_file_reference
 from app.services.invoice_pdf_service import InvoicePdfService
 from app.services.email_service import EmailService
 from app.services.whatsapp_service import WhatsAppSendResult, WhatsAppService
@@ -35,10 +35,10 @@ class BillService:
         self.shop_key = shop_key
         self.repo = BillRepository(db)
         self.customer_repo = CustomerRepository(db)
-        self.audit_service = AuditService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
         self.invoice_pdf_service = InvoicePdfService()
         self.email_service = EmailService()
-        self.whatsapp_service = WhatsAppService(db)
+        self.whatsapp_service = WhatsAppService(db, shop_key=shop_key)
 
     @staticmethod
     def _to_money(value: Decimal | int | float | str) -> Decimal:
@@ -84,6 +84,308 @@ class BillService:
 
         return final_price, balance_amount, payment_status
 
+    @staticmethod
+    def _payload_has_field(payload: BillCreate | BillUpdate, field_name: str) -> bool:
+        return field_name in payload.model_fields_set
+
+    def _to_quantity(self, value: Decimal | int | float | str) -> Decimal:
+        quantity = self._to_money(value)
+        if quantity <= Decimal("0.00"):
+            raise AppException(status_code=422, code="invalid_quantity", message="Quantity must be greater than zero")
+        return quantity
+
+    def _build_item_data(self, item: BillItemCreate) -> dict[str, Decimal | BillItemType | str]:
+        quantity = self._to_quantity(item.quantity)
+        unit_price = self._to_money(item.unit_price)
+        discount = self._to_money(item.discount)
+        gross_total = (quantity * unit_price).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+
+        if discount > gross_total:
+            raise AppException(
+                status_code=422,
+                code="line_discount_exceeds_price",
+                message="Line item discount cannot be greater than line price",
+            )
+
+        line_total = (gross_total - discount).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+        return {
+            "item_type": item.item_type,
+            "item_name": item.item_name.strip(),
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "discount": discount,
+            "line_total": line_total,
+        }
+
+    def _legacy_item_from_values(
+        self,
+        *,
+        product_name: str | None,
+        frame_name: str | None,
+        whole_price: Decimal | None,
+        discount: Decimal | None,
+    ) -> BillItemCreate:
+        if product_name is None or not product_name.strip() or whole_price is None:
+            raise AppException(
+                status_code=422,
+                code="bill_items_required",
+                message="Provide at least one bill item",
+            )
+
+        return BillItemCreate(
+            item_type=BillItemType.FRAME if frame_name else BillItemType.OTHER,
+            item_name=product_name.strip(),
+            quantity=Decimal("1.00"),
+            unit_price=whole_price,
+            discount=discount or Decimal("0.00"),
+        )
+
+    def _existing_items_as_create(self, bill: Bill) -> list[BillItemCreate]:
+        if bill.items:
+            return [
+                BillItemCreate(
+                    item_type=item.item_type,
+                    item_name=item.item_name,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    discount=item.discount,
+                )
+                for item in bill.items
+            ]
+
+        return [
+            self._legacy_item_from_values(
+                product_name=bill.product_name,
+                frame_name=bill.frame_name,
+                whole_price=bill.whole_price,
+                discount=bill.discount,
+            )
+        ]
+
+    def _resolve_items_for_create(self, payload: BillCreate) -> list[dict[str, Decimal | BillItemType | str]]:
+        source_items = payload.items or [
+            self._legacy_item_from_values(
+                product_name=payload.product_name,
+                frame_name=payload.frame_name,
+                whole_price=payload.whole_price,
+                discount=payload.discount,
+            )
+        ]
+        return [self._build_item_data(item) for item in source_items]
+
+    def _resolve_items_for_update(
+        self,
+        *,
+        bill: Bill,
+        payload: BillUpdate,
+        update_data: dict,
+    ) -> list[dict[str, Decimal | BillItemType | str]]:
+        legacy_item_fields = {"product_name", "frame_name", "whole_price", "discount"}
+        if self._payload_has_field(payload, "items"):
+            if not payload.items:
+                raise AppException(
+                    status_code=422,
+                    code="bill_items_required",
+                    message="Provide at least one bill item",
+                )
+            source_items = payload.items
+        elif legacy_item_fields.intersection(update_data):
+            source_items = [
+                self._legacy_item_from_values(
+                    product_name=update_data.get("product_name", bill.product_name),
+                    frame_name=update_data.get("frame_name", bill.frame_name),
+                    whole_price=update_data.get("whole_price", bill.whole_price),
+                    discount=update_data.get("discount", bill.discount),
+                )
+            ]
+        else:
+            source_items = self._existing_items_as_create(bill)
+
+        return [self._build_item_data(item) for item in source_items]
+
+    def _build_payment_data(self, payment: BillPaymentCreate) -> dict[str, Decimal | PaymentMode | datetime | str | None]:
+        return {
+            "mode": payment.mode,
+            "amount": self._to_money(payment.amount),
+            "paid_at": payment.paid_at or datetime.now(UTC),
+            "reference_no": payment.reference_no.strip() if payment.reference_no else None,
+        }
+
+    def _legacy_payments_from_values(
+        self,
+        *,
+        paid_amount: Decimal | None,
+        payment_mode: PaymentMode | None,
+    ) -> list[BillPaymentCreate]:
+        paid_total = self._to_money(paid_amount or Decimal("0.00"))
+        if paid_total <= Decimal("0.00"):
+            return []
+
+        return [
+            BillPaymentCreate(
+                mode=payment_mode or PaymentMode.CASH,
+                amount=paid_total,
+            )
+        ]
+
+    def _existing_payments_as_create(self, bill: Bill) -> list[BillPaymentCreate]:
+        if bill.payments:
+            return [
+                BillPaymentCreate(
+                    mode=payment.mode,
+                    amount=payment.amount,
+                    paid_at=payment.paid_at,
+                    reference_no=payment.reference_no,
+                )
+                for payment in bill.payments
+            ]
+
+        return self._legacy_payments_from_values(paid_amount=bill.paid_amount, payment_mode=bill.payment_mode)
+
+    def _resolve_payments_for_create(self, payload: BillCreate) -> list[dict[str, Decimal | PaymentMode | datetime | str | None]]:
+        source_payments = payload.payments or self._legacy_payments_from_values(
+            paid_amount=payload.paid_amount,
+            payment_mode=payload.payment_mode,
+        )
+        return [self._build_payment_data(payment) for payment in source_payments]
+
+    def _resolve_payments_for_update(
+        self,
+        *,
+        bill: Bill,
+        payload: BillUpdate,
+        update_data: dict,
+    ) -> list[dict[str, Decimal | PaymentMode | datetime | str | None]]:
+        legacy_payment_fields = {"paid_amount", "payment_mode"}
+        if self._payload_has_field(payload, "payments"):
+            source_payments = payload.payments or []
+        elif legacy_payment_fields.intersection(update_data):
+            source_payments = self._legacy_payments_from_values(
+                paid_amount=update_data.get("paid_amount", bill.paid_amount),
+                payment_mode=update_data.get("payment_mode", bill.payment_mode),
+            )
+        else:
+            source_payments = self._existing_payments_as_create(bill)
+
+        return [self._build_payment_data(payment) for payment in source_payments]
+
+    def _calculate_bill_totals(
+        self,
+        *,
+        items_data: list[dict[str, Decimal | BillItemType | str]],
+        payments_data: list[dict[str, Decimal | PaymentMode | datetime | str | None]],
+        tax_total: Decimal,
+    ) -> dict[str, Decimal | PaymentStatus]:
+        subtotal = sum(
+            (Decimal(item["quantity"]) * Decimal(item["unit_price"])).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+            for item in items_data
+        ).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+        discount_total = sum(Decimal(item["discount"]) for item in items_data).quantize(
+            MONEY_QUANTIZER,
+            rounding=ROUND_HALF_UP,
+        )
+        item_total = sum(Decimal(item["line_total"]) for item in items_data).quantize(
+            MONEY_QUANTIZER,
+            rounding=ROUND_HALF_UP,
+        )
+        grand_total = (item_total + tax_total).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+        paid_total = sum(Decimal(payment["amount"]) for payment in payments_data).quantize(
+            MONEY_QUANTIZER,
+            rounding=ROUND_HALF_UP,
+        )
+
+        if paid_total > grand_total:
+            raise AppException(
+                status_code=422,
+                code="paid_exceeds_grand_total",
+                message="Paid total cannot be greater than bill grand total",
+            )
+
+        balance_amount = (grand_total - paid_total).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+        if balance_amount <= Decimal("0.00"):
+            payment_status = PaymentStatus.PAID
+        elif paid_total > Decimal("0.00"):
+            payment_status = PaymentStatus.PARTIAL
+        else:
+            payment_status = PaymentStatus.PENDING
+
+        return {
+            "subtotal": subtotal,
+            "discount_total": discount_total,
+            "tax_total": tax_total,
+            "grand_total": grand_total,
+            "paid_total": paid_total,
+            "balance_amount": balance_amount,
+            "payment_status": payment_status,
+        }
+
+    @staticmethod
+    def _frame_snapshot(items_data: list[dict[str, Decimal | BillItemType | str]], fallback: str | None = None) -> str | None:
+        for item in items_data:
+            if item["item_type"] == BillItemType.FRAME:
+                return str(item["item_name"])
+        return fallback
+
+    def _apply_bill_components(
+        self,
+        *,
+        bill: Bill,
+        items_data: list[dict[str, Decimal | BillItemType | str]],
+        payments_data: list[dict[str, Decimal | PaymentMode | datetime | str | None]],
+        tax_total: Decimal,
+        frame_name: str | None,
+    ) -> None:
+        totals = self._calculate_bill_totals(items_data=items_data, payments_data=payments_data, tax_total=tax_total)
+        first_item = items_data[0]
+
+        bill.product_name = str(first_item["item_name"])
+        bill.frame_name = self._frame_snapshot(items_data, fallback=frame_name)
+        bill.whole_price = Decimal(totals["subtotal"])
+        bill.discount = Decimal(totals["discount_total"])
+        bill.final_price = Decimal(totals["grand_total"])
+        bill.paid_amount = Decimal(totals["paid_total"])
+        bill.subtotal = Decimal(totals["subtotal"])
+        bill.discount_total = Decimal(totals["discount_total"])
+        bill.tax_total = Decimal(totals["tax_total"])
+        bill.grand_total = Decimal(totals["grand_total"])
+        bill.paid_total = Decimal(totals["paid_total"])
+        bill.balance_amount = Decimal(totals["balance_amount"])
+        bill.payment_status = totals["payment_status"]
+        bill.payment_mode = (
+            payments_data[0]["mode"]
+            if payments_data
+            else bill.payment_mode or PaymentMode.CASH
+        )
+        bill.items = [
+            BillItem(
+                shop_id=bill.shop_id,
+                item_type=item["item_type"],
+                item_name=str(item["item_name"]),
+                quantity=Decimal(item["quantity"]),
+                unit_price=Decimal(item["unit_price"]),
+                discount=Decimal(item["discount"]),
+                line_total=Decimal(item["line_total"]),
+            )
+            for item in items_data
+        ]
+        bill.payments = [
+            Payment(
+                shop_id=bill.shop_id,
+                mode=payment["mode"],
+                amount=Decimal(payment["amount"]),
+                paid_at=payment["paid_at"],
+                reference_no=payment["reference_no"],
+            )
+            for payment in payments_data
+        ]
+
+    @staticmethod
+    def _sync_child_shop_ids(bill: Bill) -> None:
+        for item in bill.items:
+            item.shop_id = bill.shop_id
+        for payment in bill.payments:
+            payment.shop_id = bill.shop_id
+
     def _serialize(self, bill: Bill) -> BillRead:
         customer = bill.customer
         return BillRead(
@@ -97,12 +399,19 @@ class BillService:
             discount=bill.discount,
             final_price=bill.final_price,
             paid_amount=bill.paid_amount,
+            subtotal=bill.subtotal,
+            discount_total=bill.discount_total,
+            tax_total=bill.tax_total,
+            grand_total=bill.grand_total,
+            paid_total=bill.paid_total,
             balance_amount=bill.balance_amount,
             payment_mode=bill.payment_mode,
             payment_status=bill.payment_status,
+            items=list(bill.items),
+            payments=list(bill.payments),
             delivery_date=bill.delivery_date,
             notes=bill.notes,
-            pdf_url=bill.pdf_url,
+            pdf_url=self._bill_pdf_download_url(bill.id) if self._has_pdf_reference(bill) else None,
             created_at=bill.created_at,
             updated_at=bill.updated_at,
             created_by=bill.created_by,
@@ -120,7 +429,7 @@ class BillService:
         for offset in range(1, 500):
             sequence = existing_count + offset
             candidate = f"BILL-{today:%Y%m%d}-{sequence:04d}"
-            if not self.repo.get_by_bill_number(candidate):
+            if not self.repo.get_by_bill_number(candidate, shop_key=self.shop_key):
                 return candidate
 
         raise AppException(status_code=500, code="bill_number_generation_failed", message="Unable to generate bill number")
@@ -147,20 +456,28 @@ class BillService:
     def _format_money(value: Decimal) -> str:
         return f"{Decimal(value):,.2f}"
 
-    def _resolve_media_file_from_public_url(self, media_url: str) -> Path:
-        parsed = urlparse(media_url)
-        path_value = parsed.path if parsed.scheme else media_url
+    @staticmethod
+    def _bill_pdf_download_url(bill_id: int) -> str:
+        return f"{settings.api_v1_prefix}/bills/{bill_id}/pdf/download"
 
-        if not path_value.startswith(settings.media_url_prefix):
-            raise AppException(status_code=422, code="invalid_media_url", message="Bill PDF URL is invalid")
+    @staticmethod
+    def _has_pdf_reference(bill: Bill) -> bool:
+        return bool((bill.pdf_file_path and bill.pdf_file_path.strip()) or (bill.pdf_url and bill.pdf_url.strip()))
 
-        relative_part = path_value[len(settings.media_url_prefix) :].lstrip("/")
-        absolute_path = settings.media_root_path / relative_part
+    def _resolve_bill_pdf_file(self, bill: Bill) -> Path:
+        return resolve_media_file_reference(
+            bill.pdf_file_path or bill.pdf_url,
+            allowed_dir=settings.invoice_media_dir,
+            invalid_code="invalid_bill_pdf_file_reference",
+            missing_code="bill_pdf_not_found",
+            missing_message="Bill PDF file not found on server",
+        )
 
-        if not absolute_path.exists() or not absolute_path.is_file():
-            raise AppException(status_code=404, code="bill_pdf_not_found", message="Bill PDF file not found on server")
-
-        return absolute_path
+    def _set_bill_pdf_file(self, bill: Bill, file_path: Path) -> str:
+        file_reference = build_media_file_reference(file_path)
+        bill.pdf_file_path = file_reference
+        bill.pdf_url = self._bill_pdf_download_url(bill.id)
+        return file_reference
 
     def _send_bill_whatsapp_document(
         self,
@@ -170,10 +487,10 @@ class BillService:
         actor: User,
         raise_on_error: bool,
     ) -> WhatsAppSendResult:
-        if not bill.pdf_url:
+        if not self._has_pdf_reference(bill):
             raise AppException(status_code=422, code="bill_pdf_missing", message="Bill PDF has not been generated")
 
-        pdf_file = self._resolve_media_file_from_public_url(bill.pdf_url)
+        pdf_file = self._resolve_bill_pdf_file(bill)
         media_id = self.whatsapp_service.upload_media(pdf_file)
 
         caption = (
@@ -200,7 +517,7 @@ class BillService:
         customer: Customer,
         raise_on_error: bool,
     ) -> bool:
-        if not bill.pdf_url:
+        if not self._has_pdf_reference(bill):
             raise AppException(status_code=422, code="bill_pdf_missing", message="Bill PDF has not been generated")
 
         if not self.email_service.is_configured():
@@ -217,7 +534,7 @@ class BillService:
                 message="Customer email is not available",
             )
 
-        pdf_file = self._resolve_media_file_from_public_url(bill.pdf_url)
+        pdf_file = self._resolve_bill_pdf_file(bill)
         sent = self.email_service.send_bill_invoice_email(customer=customer, bill=bill, invoice_pdf_path=pdf_file)
 
         if not sent and raise_on_error:
@@ -231,11 +548,11 @@ class BillService:
 
     def _try_auto_generate_pdf(self, bill: Bill, actor: User, action: str) -> None:
         try:
-            pdf_url = self.invoice_pdf_service.generate_invoice_pdf(
+            generated = self.invoice_pdf_service.generate_invoice_pdf(
                 bill=bill,
                 staff_name=actor.full_name or actor.email,
             )
-            bill.pdf_url = pdf_url
+            pdf_reference = self._set_bill_pdf_file(bill, generated.file_path)
             bill.updated_by = actor.id
             self.repo.save(bill)
             self.audit_service.log(
@@ -243,7 +560,7 @@ class BillService:
                 action=action,
                 entity_type="bill",
                 entity_id=str(bill.id),
-                new_values={"pdf_url": pdf_url},
+                new_values={"pdf_file_path": pdf_reference, "pdf_url": bill.pdf_url},
             )
             self.db.commit()
             self.db.refresh(bill)
@@ -340,19 +657,27 @@ class BillService:
             raise AppException(status_code=404, code="bill_not_found", message="Bill not found")
         return self._serialize(bill)
 
+    def get_pdf_file_for_download(self, bill_id: int, actor: User) -> Path:
+        if actor.shop_key != self.shop_key:
+            raise AppException(status_code=403, code="invalid_shop_access", message="Invalid shop access")
+
+        bill = self.repo.get_by_id(bill_id, shop_key=self.shop_key)
+        if not bill:
+            raise AppException(status_code=404, code="bill_not_found", message="Bill not found")
+
+        if not self._has_pdf_reference(bill):
+            raise AppException(status_code=422, code="bill_pdf_missing", message="Bill PDF has not been generated")
+
+        return self._resolve_bill_pdf_file(bill)
+
     def create_bill(self, payload: BillCreate, actor: User) -> BillRead:
         customer = self.customer_repo.get_by_id(payload.customer_id, shop_key=self.shop_key)
         if not customer:
             raise AppException(status_code=404, code="customer_not_found", message="Customer not found")
 
-        whole_price = self._to_money(payload.whole_price)
-        discount = self._to_money(payload.discount)
-        paid_amount = self._to_money(payload.paid_amount)
-        final_price, balance_amount, payment_status = self._calculate_amounts(
-            whole_price=whole_price,
-            discount=discount,
-            paid_amount=paid_amount,
-        )
+        items_data = self._resolve_items_for_create(payload)
+        payments_data = self._resolve_payments_for_create(payload)
+        tax_total = self._to_money(payload.tax_total)
 
         bill: Bill | None = None
 
@@ -362,23 +687,36 @@ class BillService:
                 bill_number=bill_number,
                 customer_id=customer.id,
                 customer_name_snapshot=customer.name,
-                product_name=payload.product_name,
-                frame_name=payload.frame_name,
-                whole_price=whole_price,
-                discount=discount,
-                final_price=final_price,
-                paid_amount=paid_amount,
-                balance_amount=balance_amount,
-                payment_mode=payload.payment_mode,
-                payment_status=payment_status,
+                product_name="",
+                frame_name=None,
+                whole_price=Decimal("0.00"),
+                discount=Decimal("0.00"),
+                final_price=Decimal("0.00"),
+                paid_amount=Decimal("0.00"),
+                balance_amount=Decimal("0.00"),
+                subtotal=Decimal("0.00"),
+                discount_total=Decimal("0.00"),
+                tax_total=Decimal("0.00"),
+                grand_total=Decimal("0.00"),
+                paid_total=Decimal("0.00"),
+                payment_mode=payload.payment_mode or PaymentMode.CASH,
+                payment_status=PaymentStatus.PENDING,
                 delivery_date=payload.delivery_date,
                 notes=payload.notes,
                 created_by=actor.id,
                 updated_by=actor.id,
             )
+            self._apply_bill_components(
+                bill=bill,
+                items_data=items_data,
+                payments_data=payments_data,
+                tax_total=tax_total,
+                frame_name=payload.frame_name,
+            )
 
             try:
                 self.repo.create(bill)
+                self._sync_child_shop_ids(bill)
                 self.audit_service.log(
                     actor_user_id=actor.id,
                     action="bill.create",
@@ -387,8 +725,8 @@ class BillService:
                     new_values={
                         "bill_number": bill.bill_number,
                         "customer_id": bill.customer_id,
-                        "final_price": str(bill.final_price),
-                        "paid_amount": str(bill.paid_amount),
+                        "grand_total": str(bill.grand_total),
+                        "paid_total": str(bill.paid_total),
                         "balance_amount": str(bill.balance_amount),
                     },
                 )
@@ -407,7 +745,7 @@ class BillService:
         self._try_auto_generate_pdf(bill=bill, actor=actor, action="bill.generate_pdf.auto")
 
         persisted_bill = self.repo.get_by_id(bill.id, shop_key=self.shop_key)
-        if persisted_bill and persisted_bill.pdf_url:
+        if persisted_bill and self._has_pdf_reference(persisted_bill):
             if self._is_customer_email_eligible(customer):
                 self._try_auto_send_email(bill=persisted_bill, customer=customer, actor=actor)
 
@@ -427,7 +765,12 @@ class BillService:
             "frame_name": bill.frame_name,
             "whole_price": str(bill.whole_price),
             "discount": str(bill.discount),
+            "subtotal": str(bill.subtotal),
+            "discount_total": str(bill.discount_total),
+            "tax_total": str(bill.tax_total),
+            "grand_total": str(bill.grand_total),
             "paid_amount": str(bill.paid_amount),
+            "paid_total": str(bill.paid_total),
             "payment_mode": bill.payment_mode.value,
             "payment_status": bill.payment_status.value,
             "delivery_date": str(bill.delivery_date) if bill.delivery_date else None,
@@ -443,31 +786,25 @@ class BillService:
             bill.customer_id = customer.id
             bill.customer_name_snapshot = customer.name
 
-        whole_price = self._to_money(update_data.get("whole_price", bill.whole_price))
-        discount = self._to_money(update_data.get("discount", bill.discount))
-        paid_amount = self._to_money(update_data.get("paid_amount", bill.paid_amount))
+        items_data = self._resolve_items_for_update(bill=bill, payload=payload, update_data=update_data)
+        payments_data = self._resolve_payments_for_update(bill=bill, payload=payload, update_data=update_data)
+        tax_total = self._to_money(update_data.get("tax_total", bill.tax_total))
 
-        final_price, balance_amount, payment_status = self._calculate_amounts(
-            whole_price=whole_price,
-            discount=discount,
-            paid_amount=paid_amount,
-        )
-
-        bill.product_name = update_data.get("product_name", bill.product_name)
-        bill.frame_name = update_data.get("frame_name", bill.frame_name)
-        bill.whole_price = whole_price
-        bill.discount = discount
-        bill.final_price = final_price
-        bill.paid_amount = paid_amount
-        bill.balance_amount = balance_amount
         bill.payment_mode = update_data.get("payment_mode", bill.payment_mode)
-        bill.payment_status = payment_status
+        self._apply_bill_components(
+            bill=bill,
+            items_data=items_data,
+            payments_data=payments_data,
+            tax_total=tax_total,
+            frame_name=update_data.get("frame_name", bill.frame_name),
+        )
         bill.delivery_date = update_data.get("delivery_date", bill.delivery_date)
         bill.notes = update_data.get("notes", bill.notes)
         bill.updated_by = actor.id
 
         try:
             self.repo.save(bill)
+            self._sync_child_shop_ids(bill)
             self.audit_service.log(
                 actor_user_id=actor.id,
                 action="bill.update",
@@ -482,6 +819,11 @@ class BillService:
                     "discount": str(bill.discount),
                     "final_price": str(bill.final_price),
                     "paid_amount": str(bill.paid_amount),
+                    "subtotal": str(bill.subtotal),
+                    "discount_total": str(bill.discount_total),
+                    "tax_total": str(bill.tax_total),
+                    "grand_total": str(bill.grand_total),
+                    "paid_total": str(bill.paid_total),
                     "balance_amount": str(bill.balance_amount),
                     "payment_mode": bill.payment_mode.value,
                     "payment_status": bill.payment_status.value,
@@ -525,12 +867,12 @@ class BillService:
         if not bill:
             raise AppException(status_code=404, code="bill_not_found", message="Bill not found")
 
-        pdf_url = self.invoice_pdf_service.generate_invoice_pdf(
+        generated = self.invoice_pdf_service.generate_invoice_pdf(
             bill=bill,
             staff_name=actor.full_name or actor.email,
         )
 
-        bill.pdf_url = pdf_url
+        pdf_reference = self._set_bill_pdf_file(bill, generated.file_path)
         bill.updated_by = actor.id
 
         try:
@@ -540,7 +882,7 @@ class BillService:
                 action="bill.generate_pdf",
                 entity_type="bill",
                 entity_id=str(bill.id),
-                new_values={"pdf_url": pdf_url},
+                new_values={"pdf_file_path": pdf_reference, "pdf_url": bill.pdf_url},
             )
             self.db.commit()
             self.db.refresh(bill)
@@ -566,7 +908,7 @@ class BillService:
                 message="Customer email is not available",
             )
 
-        if not bill.pdf_url:
+        if not self._has_pdf_reference(bill):
             self.generate_pdf(bill_id=bill.id, actor=actor)
             bill = self.repo.get_by_id(bill.id, shop_key=self.shop_key)
             if not bill:
@@ -604,7 +946,7 @@ class BillService:
                 message="Customer is not eligible for business-initiated WhatsApp messages",
             )
 
-        if not bill.pdf_url:
+        if not self._has_pdf_reference(bill):
             self.generate_pdf(bill_id=bill.id, actor=actor)
             bill = self.repo.get_by_id(bill.id, shop_key=self.shop_key)
             if not bill:

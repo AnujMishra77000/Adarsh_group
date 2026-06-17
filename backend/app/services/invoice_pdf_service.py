@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from html import escape
@@ -10,9 +11,14 @@ from app.core.exceptions import AppException
 from app.models.bill import Bill
 
 
+@dataclass(frozen=True)
+class GeneratedInvoicePdf:
+    file_path: Path
+
+
 class InvoicePdfService:
     def __init__(self) -> None:
-        self.company_name = "Aadarsh Eye Boutique Care Centre"
+        self.company_name = "Adarsh Optical Group"
 
     @staticmethod
     def _format_money(value: Decimal) -> str:
@@ -34,6 +40,54 @@ class InvoicePdfService:
         generated_at = self._format_date(datetime.now(UTC))
         customer_business_id = bill.customer.customer_id if bill.customer else "-"
         customer_contact_no = bill.customer.contact_no if bill.customer else "-"
+        items = list(bill.items) or [
+            {
+                "item_type": "other",
+                "item_name": bill.product_name,
+                "quantity": Decimal("1.00"),
+                "unit_price": bill.whole_price,
+                "discount": bill.discount,
+                "line_total": bill.final_price,
+            }
+        ]
+        payments = list(bill.payments)
+
+        item_rows = ""
+        for item in items:
+            item_type = item.item_type.value if hasattr(item, "item_type") else str(item["item_type"])
+            item_name = item.item_name if hasattr(item, "item_name") else str(item["item_name"])
+            quantity = item.quantity if hasattr(item, "quantity") else Decimal(item["quantity"])
+            unit_price = item.unit_price if hasattr(item, "unit_price") else Decimal(item["unit_price"])
+            discount = item.discount if hasattr(item, "discount") else Decimal(item["discount"])
+            line_total = item.line_total if hasattr(item, "line_total") else Decimal(item["line_total"])
+            item_rows += f"""
+              <tr>
+                <td>{escape(item_type.replace("_", " ").title())}</td>
+                <td>{escape(item_name)}</td>
+                <td class="num">{self._format_money(quantity)}</td>
+                <td class="num">INR {self._format_money(unit_price)}</td>
+                <td class="num">INR {self._format_money(discount)}</td>
+                <td class="num">INR {self._format_money(line_total)}</td>
+              </tr>
+            """
+
+        if payments:
+            payment_rows = ""
+            for payment in payments:
+                payment_rows += f"""
+                  <tr>
+                    <td>{escape(payment.mode.value.replace("_", " ").title())}</td>
+                    <td>INR {self._format_money(payment.amount)}</td>
+                    <td>{escape(self._format_date(payment.paid_at))}</td>
+                    <td>{escape(payment.reference_no or "-")}</td>
+                  </tr>
+                """
+        else:
+            payment_rows = """
+              <tr>
+                <td colspan="4">No payments recorded yet.</td>
+              </tr>
+            """
 
         logo_svg = """
         <svg width="56" height="56" viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -80,6 +134,7 @@ class InvoicePdfService:
               padding: 8px 6px;
             }}
             td {{ border-bottom: 1px solid #e5e7eb; padding: 9px 6px; }}
+            .num {{ text-align: right; white-space: nowrap; }}
             .label {{ color: #6b7280; width: 35%; }}
             .value {{ color: #111827; font-weight: 600; }}
             .totals {{ margin-top: 14px; width: 100%; }}
@@ -129,41 +184,63 @@ class InvoicePdfService:
                     <td class="value">{escape(customer_contact_no)}</td>
                   </tr>
                   <tr>
-                    <td class="label">Product</td>
-                    <td class="value">{escape(bill.product_name)}</td>
-                  </tr>
-                  <tr>
-                    <td class="label">Frame</td>
-                    <td class="value">{escape(bill.frame_name or "-")}</td>
-                  </tr>
-                  <tr>
-                    <td class="label">Payment Mode</td>
-                    <td class="value">{escape(bill.payment_mode.value.upper())}</td>
-                  </tr>
-                  <tr>
                     <td class="label">Payment Status</td>
                     <td class="value">{escape(bill.payment_status.value.upper())}</td>
                   </tr>
                 </tbody>
               </table>
 
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Item</th>
+                    <th class="num">Qty</th>
+                    <th class="num">Unit</th>
+                    <th class="num">Discount</th>
+                    <th class="num">Line Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {item_rows}
+                </tbody>
+              </table>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>Payment Mode</th>
+                    <th>Amount</th>
+                    <th>Paid At</th>
+                    <th>Reference</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payment_rows}
+                </tbody>
+              </table>
+
               <table class="totals">
                 <tbody>
                   <tr>
-                    <td class="name">Whole Price</td>
-                    <td class="amount">INR {self._format_money(bill.whole_price)}</td>
+                    <td class="name">Subtotal</td>
+                    <td class="amount">INR {self._format_money(bill.subtotal)}</td>
                   </tr>
                   <tr>
-                    <td class="name">Discount</td>
-                    <td class="amount">INR {self._format_money(bill.discount)}</td>
+                    <td class="name">Discount Total</td>
+                    <td class="amount">INR {self._format_money(bill.discount_total)}</td>
                   </tr>
                   <tr>
-                    <td class="name">Final Price</td>
-                    <td class="amount">INR {self._format_money(bill.final_price)}</td>
+                    <td class="name">Tax Total</td>
+                    <td class="amount">INR {self._format_money(bill.tax_total)}</td>
                   </tr>
                   <tr>
-                    <td class="name">Paid Amount</td>
-                    <td class="amount">INR {self._format_money(bill.paid_amount)}</td>
+                    <td class="name">Grand Total</td>
+                    <td class="amount">INR {self._format_money(bill.grand_total)}</td>
+                  </tr>
+                  <tr>
+                    <td class="name">Paid Total</td>
+                    <td class="amount">INR {self._format_money(bill.paid_total)}</td>
                   </tr>
                   <tr>
                     <td class="name final">Balance Amount</td>
@@ -186,16 +263,7 @@ class InvoicePdfService:
         </html>
         """
 
-    def _build_public_url(self, absolute_path: Path) -> str:
-        media_root = settings.media_root_path.resolve()
-        try:
-            relative = absolute_path.resolve().relative_to(media_root)
-        except ValueError:
-            return str(absolute_path)
-
-        return f"{settings.backend_public_url}{settings.media_url_prefix}/{relative.as_posix()}"
-
-    def generate_invoice_pdf(self, bill: Bill, staff_name: str) -> str:
+    def generate_invoice_pdf(self, bill: Bill, staff_name: str) -> GeneratedInvoicePdf:
         try:
             from weasyprint import HTML
         except Exception as exc:  # pragma: no cover - environment dependent
@@ -220,4 +288,4 @@ class InvoicePdfService:
                 message="Invoice PDF generation failed",
             ) from exc
 
-        return self._build_public_url(file_path)
+        return GeneratedInvoicePdf(file_path=file_path)

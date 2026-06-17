@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from app.db.shop_scope import assign_shop_scope, shop_filter
 from app.models.campaign import Campaign
 from app.models.enums import CampaignStatus
 
@@ -20,7 +21,7 @@ class CampaignRepository:
         status: CampaignStatus | None = None,
         search: str | None = None,
     ) -> tuple[list[Campaign], int]:
-        query = self.db.query(Campaign).filter(Campaign.is_deleted.is_(False), Campaign.shop_key == shop_key)
+        query = self.db.query(Campaign).filter(Campaign.is_deleted.is_(False), shop_filter(self.db, Campaign, shop_key))
 
         if status is not None:
             query = query.filter(Campaign.status == status)
@@ -43,7 +44,7 @@ class CampaignRepository:
         if not include_deleted:
             query = query.filter(Campaign.is_deleted.is_(False))
         if shop_key is not None:
-            query = query.filter(Campaign.shop_key == shop_key)
+            query = query.filter(shop_filter(self.db, Campaign, shop_key))
         return query.filter(Campaign.id == campaign_id).first()
 
     def list_due_scheduled(self, now: datetime, limit: int = 100) -> list[Campaign]:
@@ -60,11 +61,13 @@ class CampaignRepository:
         )
 
     def create(self, campaign: Campaign) -> Campaign:
+        assign_shop_scope(campaign, self.db, campaign.shop_key)
         self.db.add(campaign)
         self.db.flush()
         return campaign
 
     def save(self, campaign: Campaign) -> Campaign:
+        assign_shop_scope(campaign, self.db, campaign.shop_key)
         self.db.add(campaign)
         self.db.flush()
         return campaign

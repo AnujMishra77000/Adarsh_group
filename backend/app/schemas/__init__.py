@@ -1,6 +1,15 @@
 from app.schemas.analytics import DashboardSummaryResponse, RevenueSummaryResponse, RevenueTimeseriesPoint, RevenueTimeseriesResponse
 from app.schemas.auth import AdminRegisterRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, TokenPairResponse
-from app.schemas.bill import BillCreate, BillListResponse, BillRead, BillUpdate
+from app.schemas.bill import (
+    BillCreate,
+    BillItemCreate,
+    BillItemRead,
+    BillListResponse,
+    BillPaymentCreate,
+    BillPaymentRead,
+    BillRead,
+    BillUpdate,
+)
 from app.schemas.campaign import CampaignCreate, CampaignListResponse, CampaignRead, CampaignScheduleResponse, CampaignUpdate
 from app.schemas.campaign_log import CampaignLogListResponse, CampaignLogRead
 from app.schemas.customer import (
@@ -67,6 +76,10 @@ __all__ = [
     "VendorRead",
     "VendorListResponse",
     "BillCreate",
+    "BillItemCreate",
+    "BillItemRead",
+    "BillPaymentCreate",
+    "BillPaymentRead",
     "BillUpdate",
     "BillRead",
     "BillListResponse",

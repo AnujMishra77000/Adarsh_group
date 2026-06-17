@@ -17,12 +17,26 @@ class Gender(str, Enum):
 class PaymentMode(str, Enum):
     CASH = "cash"
     UPI = "upi"
+    CARD = "card"
+    BANK_TRANSFER = "bank_transfer"
+    OTHER = "other"
 
 
 class PaymentStatus(str, Enum):
     PENDING = "pending"
     PARTIAL = "partial"
     PAID = "paid"
+
+
+class BillItemType(str, Enum):
+    FRAME = "frame"
+    LENS = "lens"
+    COATING = "coating"
+    CONTACT_LENS = "contact_lens"
+    EYE_TEST = "eye_test"
+    REPAIR = "repair"
+    ACCESSORY = "accessory"
+    OTHER = "other"
 
 
 class CampaignStatus(str, Enum):
@@ -51,3 +65,7 @@ class WhatsAppModuleType(str, Enum):
     PRESCRIPTION = "prescription"
     BILL = "bill"
     CAMPAIGN = "campaign"
+
+
+def enum_values(enum_cls: type[Enum]) -> list[str]:
+    return [member.value for member in enum_cls]

@@ -15,6 +15,16 @@ dist/
 *.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+frontend/vitest.config.js
+frontend/vitest.config.d.ts
+crm/vite.config.js
+crm/vite.config.d.ts
+crm/vitest.config.js
+crm/vitest.config.d.ts
+website/vite.config.js
+website/vite.config.d.ts
+website/vitest.config.js
+website/vitest.config.d.ts
 
 # Env and secrets
 .env
@@ -26,8 +36,25 @@ frontend/vite.config.d.ts
 .idea/
 .vscode/
 
-# Logs and artifacts
-*.log
-coverage/
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime storage and generated customer artifacts
+backend/storage/
+backend/private_storage/
 backend/uploads/
 backend/generated/
+backend/storage/**/*.pdf
+backend/private_storage/**/*.pdf
+backend/uploads/**/*.pdf
+
+# Logs and temp files
+*.log
+logs/
+coverage/
+tmp/
+temp/
+*.tmp
+*.temp

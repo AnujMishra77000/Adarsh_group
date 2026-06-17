@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from fastapi import HTTPException, Request, status
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.exceptions import AppException
+from app.core.config import settings
 from app.core.security import TokenDecodeError, decode_jwt_token
-from app.db.tenant import tenant_db_manager
+from app.core.shops import VALID_SHOP_KEYS, get_canonical_shop_code
+from app.db.tenant import _build_engine_kwargs
+
+
+engine = create_engine(settings.sqlalchemy_database_uri, **_build_engine_kwargs(settings.sqlalchemy_database_uri))
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
 def _extract_shop_code_from_host(host_header: str | None) -> str | None:
@@ -20,7 +26,7 @@ def _extract_shop_code_from_host(host_header: str | None) -> str | None:
     if not host_value:
         return None
 
-    if host_value in tenant_db_manager.shop_codes:
+    if host_value in VALID_SHOP_KEYS:
         return host_value
 
     segments = host_value.split(".")
@@ -28,7 +34,7 @@ def _extract_shop_code_from_host(host_header: str | None) -> str | None:
         return None
 
     candidate = segments[0].strip().lower()
-    if candidate in tenant_db_manager.shop_codes:
+    if candidate in VALID_SHOP_KEYS:
         return candidate
     return None
 
@@ -71,10 +77,9 @@ def resolve_shop_code(request: Request, explicit_shop_code: str | None = None, *
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Shop context is required")
         return None
 
-    try:
-        validated = tenant_db_manager.validate_shop_code(shop_code)
-    except AppException as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    validated = get_canonical_shop_code(shop_code)
+    if validated is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shop context")
 
     request.state.shop_code = validated
     return validated
@@ -83,19 +88,24 @@ def resolve_shop_code(request: Request, explicit_shop_code: str | None = None, *
 def get_current_shop(request: Request) -> str:
     existing = getattr(request.state, "shop_code", None)
     if isinstance(existing, str) and existing.strip():
-        return tenant_db_manager.validate_shop_code(existing)
+        validated = get_canonical_shop_code(existing)
+        if validated is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shop context")
+        return validated
     resolved = resolve_shop_code(request=request, required=True)
     assert resolved is not None
     return resolved
 
 
 def get_tenant_db(shop_code: str) -> Session:
-    validated_shop = tenant_db_manager.validate_shop_code(shop_code)
-    return tenant_db_manager.get_session(validated_shop)
+    validated_shop = get_canonical_shop_code(shop_code)
+    if not validated_shop:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shop context")
+    return SessionLocal()
 
 
-def get_db(request: Request, shop_code: str = Depends(get_current_shop)) -> Generator[Session, None, None]:
-    db = get_tenant_db(shop_code)
+def get_db(request: Request) -> Generator[Session, None, None]:
+    db = SessionLocal()
     request.state.db_session = db
     try:
         yield db

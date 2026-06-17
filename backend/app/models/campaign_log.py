@@ -12,6 +12,7 @@ class CampaignLog(Base):
     __tablename__ = "campaign_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True)
     recipient_whatsapp_no: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -20,4 +21,5 @@ class CampaignLog(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    shop = relationship("Shop", back_populates="campaign_logs")
     campaign = relationship("Campaign", back_populates="logs")

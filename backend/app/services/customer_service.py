@@ -28,7 +28,7 @@ class CustomerService:
         self.db = db
         self.shop_key = shop_key
         self.repo = CustomerRepository(db)
-        self.audit_service = AuditService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
         self.email_service = EmailService()
 
     def list_customers(self, page: int, page_size: int, search: str | None) -> CustomerListResponse:
@@ -44,7 +44,7 @@ class CustomerService:
         today_segment = datetime.utcnow().strftime("%Y%m%d")
         for _ in range(10):
             code = f"CUST-{today_segment}-{secrets.randbelow(1_000_000):06d}"
-            if not self.repo.exists_business_id(code):
+            if not self.repo.exists_business_id(code, shop_key=self.shop_key):
                 return code
         raise AppException(status_code=500, code="customer_id_generation_failed", message="Unable to generate customer id")
 

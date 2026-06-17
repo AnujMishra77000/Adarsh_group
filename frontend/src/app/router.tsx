@@ -1,8 +1,9 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 
 import { AppShell } from "@/layouts/AppShell";
 import { AuthLayout } from "@/layouts/AuthLayout";
+import { CRM_PATHS, crmPath } from "@/lib/routes";
 import { ProtectedRoute } from "@/routes/ProtectedRoute";
 import { ShopRoute } from "@/routes/ShopRoute";
 
@@ -19,6 +20,9 @@ const ShopResolvePage = lazy(() =>
 const LaunchPage = lazy(() => import("@/pages/auth/LaunchPage").then((module) => ({ default: module.LaunchPage })));
 const LandingPage = lazy(() => import("@/pages/auth/LandingPage").then((module) => ({ default: module.LandingPage })));
 const LoginPage = lazy(() => import("@/pages/auth/LoginPage").then((module) => ({ default: module.LoginPage })));
+const PublicHomePage = lazy(() =>
+  import("@/pages/public/HomePage").then((module) => ({ default: module.PublicHomePage }))
+);
 
 const BillingPage = lazy(() => import("@/pages/billing/BillingPage").then((module) => ({ default: module.BillingPage })));
 const BillingRecordsPage = lazy(() =>
@@ -72,51 +76,84 @@ function renderLazyPage(element: ReactNode) {
   return <Suspense fallback={routeFallback}>{element}</Suspense>;
 }
 
+function LegacyShopRedirect() {
+  const params = useParams<{ shopKey: string }>();
+  return <Navigate to={`${CRM_PATHS.shopResolver}/${params.shopKey ?? ""}`} replace />;
+}
+
+function LegacyCrmRedirect() {
+  const location = useLocation();
+  return <Navigate to={crmPath(location.pathname + location.search)} replace />;
+}
+
 export function AppRouter() {
   return (
     <Routes>
-      <Route path="/" element={renderLazyPage(<LaunchPage />)} />
-      <Route path="/landing" element={renderLazyPage(<ShopRoute><LandingPage /></ShopRoute>)} />
-      <Route path="/shop-entry" element={renderLazyPage(<ShopEntryPage />)} />
-      <Route path="/shop/:shopKey" element={renderLazyPage(<ShopResolvePage />)} />
+      <Route path="/" element={renderLazyPage(<PublicHomePage />)} />
+      <Route path="/about" element={renderLazyPage(<PublicHomePage />)} />
+      <Route path="/centers" element={renderLazyPage(<PublicHomePage />)} />
+      <Route path="/collections" element={renderLazyPage(<PublicHomePage />)} />
+      <Route path="/contact" element={renderLazyPage(<PublicHomePage />)} />
+
+      <Route path="/landing" element={<Navigate to={CRM_PATHS.landing} replace />} />
+      <Route path="/shop-entry" element={<Navigate to={CRM_PATHS.shopEntry} replace />} />
+      <Route path="/shop/:shopKey" element={<LegacyShopRedirect />} />
+      <Route path="/login" element={<Navigate to={CRM_PATHS.loginAdmin} replace />} />
+      <Route path="/login/admin" element={<Navigate to={CRM_PATHS.loginAdmin} replace />} />
+      <Route path="/login/staff" element={<Navigate to={CRM_PATHS.loginStaff} replace />} />
+      <Route path="/admin-register" element={<Navigate to={CRM_PATHS.adminRegister} replace />} />
+      <Route path="/dashboard" element={<Navigate to={CRM_PATHS.dashboard} replace />} />
+      <Route path="/customers/*" element={<LegacyCrmRedirect />} />
+      <Route path="/prescriptions/*" element={<LegacyCrmRedirect />} />
+      <Route path="/vendors/*" element={<LegacyCrmRedirect />} />
+      <Route path="/billing/*" element={<LegacyCrmRedirect />} />
+      <Route path="/campaigns/*" element={<LegacyCrmRedirect />} />
+      <Route path="/shared-chat" element={<Navigate to={CRM_PATHS.sharedChat} replace />} />
+      <Route path="/analytics" element={<Navigate to={CRM_PATHS.analytics} replace />} />
+      <Route path="/staff-management" element={<Navigate to={CRM_PATHS.staffManagement} replace />} />
+
+      <Route path={CRM_PATHS.root} element={renderLazyPage(<LaunchPage />)} />
+      <Route path={CRM_PATHS.landing} element={renderLazyPage(<ShopRoute><LandingPage /></ShopRoute>)} />
+      <Route path={CRM_PATHS.shopEntry} element={renderLazyPage(<ShopEntryPage />)} />
+      <Route path={`${CRM_PATHS.shopResolver}/:shopKey`} element={renderLazyPage(<ShopResolvePage />)} />
 
       <Route element={<ShopRoute><AuthLayout /></ShopRoute>}>
-        <Route path="/login" element={<Navigate to="/login/admin" replace />} />
-        <Route path="/login/admin" element={renderLazyPage(<LoginPage mode="admin" />)} />
-        <Route path="/login/staff" element={renderLazyPage(<LoginPage mode="staff" />)} />
-        <Route path="/admin-register" element={renderLazyPage(<AdminRegisterPage />)} />
+        <Route path={CRM_PATHS.login} element={<Navigate to={CRM_PATHS.loginAdmin} replace />} />
+        <Route path={CRM_PATHS.loginAdmin} element={renderLazyPage(<LoginPage mode="admin" />)} />
+        <Route path={CRM_PATHS.loginStaff} element={renderLazyPage(<LoginPage mode="staff" />)} />
+        <Route path={CRM_PATHS.adminRegister} element={renderLazyPage(<AdminRegisterPage />)} />
       </Route>
 
       <Route
         element={<ShopRoute><ProtectedRoute><AppShell /></ProtectedRoute></ShopRoute>}
       >
-        <Route path="/dashboard" element={renderLazyPage(<DashboardPage />)} />
+        <Route path={CRM_PATHS.dashboard} element={renderLazyPage(<DashboardPage />)} />
 
-        <Route path="/customers" element={renderLazyPage(<CustomersPage />)} />
-        <Route path="/customers/records" element={renderLazyPage(<CustomerRecordsPage />)} />
+        <Route path={CRM_PATHS.customers} element={renderLazyPage(<CustomersPage />)} />
+        <Route path={CRM_PATHS.customerRecords} element={renderLazyPage(<CustomerRecordsPage />)} />
 
-        <Route path="/prescriptions" element={renderLazyPage(<PrescriptionsPage />)} />
-        <Route path="/prescriptions/records" element={renderLazyPage(<PrescriptionsRecordsPage />)} />
+        <Route path={CRM_PATHS.prescriptions} element={renderLazyPage(<PrescriptionsPage />)} />
+        <Route path={CRM_PATHS.prescriptionRecords} element={renderLazyPage(<PrescriptionsRecordsPage />)} />
 
-        <Route path="/vendors" element={renderLazyPage(<VendorsPage />)} />
+        <Route path={CRM_PATHS.vendors} element={renderLazyPage(<VendorsPage />)} />
 
-        <Route path="/billing" element={renderLazyPage(<BillingPage />)} />
-        <Route path="/billing/records" element={renderLazyPage(<BillingRecordsPage />)} />
-        <Route path="/billing/view/:billId" element={renderLazyPage(<BillingDetailPage />)} />
+        <Route path={CRM_PATHS.billing} element={renderLazyPage(<BillingPage />)} />
+        <Route path={CRM_PATHS.billingRecords} element={renderLazyPage(<BillingRecordsPage />)} />
+        <Route path={`${CRM_PATHS.billing}/view/:billId`} element={renderLazyPage(<BillingDetailPage />)} />
         <Route
-          path="/billing/edit/:billId"
+          path={`${CRM_PATHS.billing}/edit/:billId`}
           element={<ProtectedRoute allowedRoles={["admin", "staff"]}>{renderLazyPage(<BillingEditPage />)}</ProtectedRoute>}
         />
 
-        <Route path="/campaigns" element={renderLazyPage(<CampaignsPage />)} />
-        <Route path="/shared-chat" element={renderLazyPage(<SharedChatPage />)} />
+        <Route path={CRM_PATHS.campaigns} element={renderLazyPage(<CampaignsPage />)} />
+        <Route path={CRM_PATHS.sharedChat} element={renderLazyPage(<SharedChatPage />)} />
 
         <Route
-          path="/analytics"
+          path={CRM_PATHS.analytics}
           element={<ProtectedRoute allowedRoles={["admin"]}>{renderLazyPage(<AnalyticsPage />)}</ProtectedRoute>}
         />
         <Route
-          path="/staff-management"
+          path={CRM_PATHS.staffManagement}
           element={<ProtectedRoute allowedRoles={["admin"]}>{renderLazyPage(<StaffManagementPage />)}</ProtectedRoute>}
         />
       </Route>

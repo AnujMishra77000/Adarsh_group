@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base
 from app.models.mixins import TimestampMixin
@@ -12,6 +12,7 @@ class ChatMessage(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
     sender_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     sender_name: Mapped[str] = mapped_column(String(255), nullable=False)
     sender_role: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
@@ -26,3 +27,5 @@ class ChatMessage(Base, TimestampMixin):
     attachment_stored_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attachment_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_attachment_compressed: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    shop = relationship("Shop", back_populates="chat_messages")

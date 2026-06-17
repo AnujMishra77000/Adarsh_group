@@ -9,7 +9,7 @@ def main() -> None:
     if not tenant_db_manager.shop_codes:
         raise SystemExit("SHOP_DATABASES is empty. Configure tenant database mapping before init.")
 
-    for shop_code in sorted(tenant_db_manager.shop_codes):
+    for shop_code in sorted(tenant_db_manager.database_shop_codes):
         engine = tenant_db_manager.get_engine(shop_code)
         Base.metadata.create_all(bind=engine)
 

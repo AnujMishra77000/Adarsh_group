@@ -4,8 +4,33 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+DEFAULT_SECRET_KEY_VALUES = {
+    "change-this-to-a-long-random-secret",
+    "replace-with-a-long-random-secret",
+    "changeme",
+    "change-me",
+    "secret",
+    "supersecret",
+    "your-secret-key",
+}
+DEFAULT_ADMIN_MASTER_PASSWORD_VALUES = {
+    "adarsh@1234",
+    "admin",
+    "admin123",
+    "password",
+    "password123",
+    "change-this-admin-master-password",
+}
+LOCAL_DEVELOPMENT_CORS_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+)
 
 
 class Settings(BaseSettings):
@@ -16,21 +41,30 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    project_name: str = Field(default="Aadarsh Eye Boutique Care Centre CRM", alias="PROJECT_NAME")
+    project_name: str = Field(default="Adarsh Optical Group CRM", alias="PROJECT_NAME")
     environment: str = Field(default="development", alias="ENVIRONMENT")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
 
     secret_key: str = Field(alias="SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    access_token_expire_minutes: int = Field(default=0, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
-    refresh_token_expire_days: int = Field(default=36500, alias="REFRESH_TOKEN_EXPIRE_DAYS")
-    admin_master_password: str = Field(default="adarsh@1234", alias="ADMIN_MASTER_PASSWORD")
+    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=14, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    allow_long_refresh_tokens_in_production: bool = Field(
+        default=False, alias="ALLOW_LONG_REFRESH_TOKENS_IN_PRODUCTION"
+    )
+    allow_admin_registration: bool = Field(default=False, alias="ALLOW_ADMIN_REGISTRATION")
+    auth_login_rate_limit_attempts: int = Field(default=10, alias="AUTH_LOGIN_RATE_LIMIT_ATTEMPTS")
+    auth_login_rate_limit_window_seconds: int = Field(default=60, alias="AUTH_LOGIN_RATE_LIMIT_WINDOW_SECONDS")
+    auth_login_lockout_failed_attempts: int = Field(default=5, alias="AUTH_LOGIN_LOCKOUT_FAILED_ATTEMPTS")
+    auth_login_lockout_seconds: int = Field(default=300, alias="AUTH_LOGIN_LOCKOUT_SECONDS")
+    admin_master_password: str = Field(alias="ADMIN_MASTER_PASSWORD")
     auth_enforce_global_email_uniqueness: bool = Field(
         default=True, alias="AUTH_ENFORCE_GLOBAL_EMAIL_UNIQUENESS"
     )
 
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     shop_databases: dict[str, str] = Field(default_factory=dict, alias="SHOP_DATABASES")
+    shop_identifier_mappings: dict[str, str] = Field(default_factory=dict, alias="SHOP_IDENTIFIER_MAPPINGS")
 
     postgres_server: str = Field(default="localhost", alias="POSTGRES_SERVER")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
@@ -61,7 +95,7 @@ class Settings(BaseSettings):
     smtp_username: str | None = Field(default=None, alias="SMTP_USERNAME")
     smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
     smtp_from_email: str | None = Field(default=None, alias="SMTP_FROM_EMAIL")
-    smtp_from_name: str = Field(default="Aadarsh Eye Boutique Care Centre", alias="SMTP_FROM_NAME")
+    smtp_from_name: str = Field(default="Adarsh Optical Group", alias="SMTP_FROM_NAME")
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
     smtp_use_ssl: bool = Field(default=False, alias="SMTP_USE_SSL")
     smtp_timeout_seconds: int = Field(default=30, alias="SMTP_TIMEOUT_SECONDS")
@@ -74,6 +108,11 @@ class Settings(BaseSettings):
     whatsapp_default_country_code: str = Field(default="91", alias="WHATSAPP_DEFAULT_COUNTRY_CODE")
     whatsapp_request_timeout_seconds: int = Field(default=25, alias="WHATSAPP_REQUEST_TIMEOUT_SECONDS")
     whatsapp_retry_attempts: int = Field(default=3, alias="WHATSAPP_RETRY_ATTEMPTS")
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def normalize_environment(cls, value: str) -> str:
+        return str(value).strip().lower()
 
     @field_validator("backend_cors_origins", mode="before")
     @classmethod
@@ -131,6 +170,97 @@ class Settings(BaseSettings):
                 continue
             cleaned[normalized_shop] = normalized_uri
         return cleaned
+
+    @field_validator("shop_identifier_mappings", mode="before")
+    @classmethod
+    def parse_shop_identifier_mappings(cls, value: str | dict[str, str] | None) -> dict[str, str]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            parsed = value
+        elif isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return {}
+            try:
+                loaded = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("SHOP_IDENTIFIER_MAPPINGS must be valid JSON object") from exc
+            if not isinstance(loaded, dict):
+                raise ValueError("SHOP_IDENTIFIER_MAPPINGS must map identifier/mobile values to shop codes")
+            parsed = {str(identifier): str(shop_code) for identifier, shop_code in loaded.items()}
+        else:
+            raise ValueError("SHOP_IDENTIFIER_MAPPINGS must be a dictionary or JSON string")
+
+        cleaned: dict[str, str] = {}
+        for identifier, shop_code in parsed.items():
+            normalized_identifier = identifier.strip().lower()
+            normalized_shop_code = shop_code.strip().lower()
+            if not normalized_identifier or not normalized_shop_code:
+                continue
+            cleaned[normalized_identifier] = normalized_shop_code
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_production_safety(self) -> "Settings":
+        if not self.is_production:
+            return self
+
+        errors: list[str] = []
+        secret_key = self.secret_key.strip()
+        admin_master_password = self.admin_master_password.strip()
+
+        if secret_key.lower() in DEFAULT_SECRET_KEY_VALUES or len(secret_key) < 32:
+            errors.append(
+                "SECRET_KEY must be a unique high-entropy value of at least 32 characters in production"
+            )
+
+        if (
+            admin_master_password.lower() in DEFAULT_ADMIN_MASTER_PASSWORD_VALUES
+            or len(admin_master_password) < 12
+        ):
+            errors.append(
+                "ADMIN_MASTER_PASSWORD must be changed from the default and be at least 12 characters in production"
+            )
+
+        if self.access_token_expire_minutes <= 0:
+            errors.append("ACCESS_TOKEN_EXPIRE_MINUTES must be greater than 0 in production")
+
+        if self.refresh_token_expire_days > 30 and not self.allow_long_refresh_tokens_in_production:
+            errors.append(
+                "REFRESH_TOKEN_EXPIRE_DAYS must be 30 or less in production unless "
+                "ALLOW_LONG_REFRESH_TOKENS_IN_PRODUCTION=true is explicitly set"
+            )
+
+        if "backend_cors_origins" not in self.model_fields_set or not self.backend_cors_origins:
+            errors.append("BACKEND_CORS_ORIGINS must be explicitly set in production")
+        elif any("*" in origin.strip() for origin in self.backend_cors_origins):
+            errors.append("BACKEND_CORS_ORIGINS must not include '*' in production")
+
+        if errors:
+            joined_errors = "; ".join(errors)
+            raise ValueError(f"Unsafe production configuration: {joined_errors}")
+
+        return self
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    @property
+    def is_development(self) -> bool:
+        return self.environment == "development"
+
+    @property
+    def admin_registration_enabled(self) -> bool:
+        return self.is_development or self.allow_admin_registration
+
+    @property
+    def effective_backend_cors_origins(self) -> list[str]:
+        origins = [origin.strip().rstrip("/") for origin in self.backend_cors_origins if origin.strip()]
+        if not self.is_production:
+            origins.extend(LOCAL_DEVELOPMENT_CORS_ORIGINS)
+        return list(dict.fromkeys(origins))
 
     @property
     def sqlalchemy_database_uri(self) -> str:

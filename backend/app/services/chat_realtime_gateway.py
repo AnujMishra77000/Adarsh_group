@@ -15,7 +15,7 @@ class ChatRealtimeGateway:
         self.channel = channel
         self.logger = structlog.get_logger(__name__)
 
-        self._connections: set[WebSocket] = set()
+        self._connections: dict[WebSocket, str] = {}
         self._connections_lock = asyncio.Lock()
 
         self._publisher: redis.Redis | None = None
@@ -50,7 +50,7 @@ class ChatRealtimeGateway:
         await self._cleanup_redis_handles()
 
         async with self._connections_lock:
-            connections = list(self._connections)
+            connections = list(self._connections.keys())
             self._connections.clear()
 
         for websocket in connections:
@@ -80,14 +80,14 @@ class ChatRealtimeGateway:
                 pass
             self._publisher = None
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, shop_key: str) -> None:
         await websocket.accept()
         async with self._connections_lock:
-            self._connections.add(websocket)
+            self._connections[websocket] = shop_key.strip().lower()
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._connections_lock:
-            self._connections.discard(websocket)
+            self._connections.pop(websocket, None)
 
     async def publish_event(self, event: dict[str, Any]) -> None:
         raw_payload = json.dumps(event, default=str)
@@ -120,8 +120,13 @@ class ChatRealtimeGateway:
                 await asyncio.sleep(1.0)
 
     async def _broadcast_raw(self, raw_payload: str) -> None:
+        target_shop_key = self._target_shop_key(raw_payload)
         async with self._connections_lock:
-            sockets = list(self._connections)
+            sockets = [
+                websocket
+                for websocket, shop_key in self._connections.items()
+                if target_shop_key is None or shop_key == target_shop_key
+            ]
 
         stale_connections: list[WebSocket] = []
         for websocket in sockets:
@@ -133,4 +138,25 @@ class ChatRealtimeGateway:
         if stale_connections:
             async with self._connections_lock:
                 for websocket in stale_connections:
-                    self._connections.discard(websocket)
+                    self._connections.pop(websocket, None)
+
+    @staticmethod
+    def _target_shop_key(raw_payload: str) -> str | None:
+        try:
+            parsed = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(parsed, dict) or parsed.get("event") != "chat.message.created":
+            return None
+
+        data = parsed.get("data")
+        if not isinstance(data, dict):
+            return None
+
+        shop_key = data.get("sender_shop_key")
+        if not isinstance(shop_key, str):
+            return None
+
+        normalized = shop_key.strip().lower()
+        return normalized or None

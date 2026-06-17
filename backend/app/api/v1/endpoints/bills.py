@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_shop_key, require_roles
@@ -85,6 +86,18 @@ def generate_bill_pdf(
 ) -> BillRead:
     service = BillService(db, shop_key=shop_key)
     return service.generate_pdf(bill_id=bill_id, actor=current_user)
+
+
+@router.get("/{bill_id}/pdf/download")
+def download_bill_pdf(
+    bill_id: int,
+    db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+) -> FileResponse:
+    service = BillService(db, shop_key=shop_key)
+    pdf_file = service.get_pdf_file_for_download(bill_id=bill_id, actor=current_user)
+    return FileResponse(path=pdf_file, media_type="application/pdf", filename=pdf_file.name)
 
 
 @router.post("/{bill_id}/send-email", response_model=MessageResponse)

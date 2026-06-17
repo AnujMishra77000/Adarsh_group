@@ -15,12 +15,11 @@ from app.models.prescription import Prescription
 @dataclass
 class GeneratedPdf:
     file_path: Path
-    public_url: str
 
 
 class PrescriptionPdfService:
     def __init__(self) -> None:
-        self.company_name = "Aadarsh Eye Boutique Care Centre"
+        self.company_name = "Adarsh Optical Group"
 
     @staticmethod
     def _format_datetime(value: datetime | None) -> str:
@@ -153,15 +152,6 @@ class PrescriptionPdfService:
         </html>
         """
 
-    def _build_public_url(self, absolute_path: Path) -> str:
-        media_root = settings.media_root_path.resolve()
-        try:
-            relative = absolute_path.resolve().relative_to(media_root)
-        except ValueError:
-            return str(absolute_path)
-
-        return f"{settings.backend_public_url}{settings.media_url_prefix}/{relative.as_posix()}"
-
     def generate_prescription_pdf(self, prescription: Prescription, customer: Customer, staff_name: str) -> GeneratedPdf:
         try:
             from weasyprint import HTML
@@ -187,4 +177,4 @@ class PrescriptionPdfService:
                 message="Prescription PDF generation failed",
             ) from exc
 
-        return GeneratedPdf(file_path=file_path, public_url=self._build_public_url(file_path))
+        return GeneratedPdf(file_path=file_path)

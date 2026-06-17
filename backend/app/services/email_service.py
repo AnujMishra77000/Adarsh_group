@@ -68,8 +68,7 @@ class EmailService:
             f"Your customer ID is: {customer.customer_id}\n\n"
             "Thank you for choosing us.\n"
             "If you have any queries, please contact our staff.\n\n"
-            "Regards,\n"
-            "Aadarsh Eye Boutique Care Centre"
+            f"Regards,\n{settings.project_name}"
         )
 
         html_text = f"""
@@ -80,7 +79,7 @@ class EmailService:
             <p>Your customer ID is: <strong>{customer.customer_id}</strong></p>
             <p>Thank you for choosing us.</p>
             <p>If you have any queries, please contact our staff.</p>
-            <p>Regards,<br />Aadarsh Eye Boutique Care Centre</p>
+            <p>Regards,<br />{settings.project_name}</p>
           </body>
         </html>
         """.strip()
@@ -97,9 +96,8 @@ class EmailService:
             f"Product: {bill.product_name}\n"
             f"Final amount: INR {bill.final_price}\n"
             f"Balance amount: INR {bill.balance_amount}\n\n"
-            "Thank you for visiting Aadarsh Eye Boutique Care Centre.\n\n"
-            "Regards,\n"
-            "Aadarsh Eye Boutique Care Centre"
+            f"Thank you for visiting {settings.project_name}.\n\n"
+            f"Regards,\n{settings.project_name}"
         )
 
         html_text = f"""
@@ -112,8 +110,8 @@ class EmailService:
               Final amount: <strong>INR {bill.final_price}</strong><br />
               Balance amount: <strong>INR {bill.balance_amount}</strong>
             </p>
-            <p>Thank you for visiting Aadarsh Eye Boutique Care Centre.</p>
-            <p>Regards,<br />Aadarsh Eye Boutique Care Centre</p>
+            <p>Thank you for visiting {settings.project_name}.</p>
+            <p>Regards,<br />{settings.project_name}</p>
           </body>
         </html>
         """.strip()

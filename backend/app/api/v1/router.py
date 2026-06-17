@@ -1,9 +1,22 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import analytics, auth, bills, campaigns, chat, customers, health, prescriptions, staff, vendors
+from app.api.v1.endpoints import (
+    analytics,
+    auth,
+    bills,
+    campaigns,
+    chat,
+    customers,
+    health,
+    prescriptions,
+    public_shops,
+    staff,
+    vendors,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(public_shops.router)
 api_router.include_router(auth.router)
 api_router.include_router(customers.router)
 api_router.include_router(vendors.router)

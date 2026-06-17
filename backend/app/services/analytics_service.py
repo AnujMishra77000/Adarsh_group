@@ -5,9 +5,10 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from app.db.shop_scope import resolve_shop_id, shop_filter
 from app.models.bill import Bill
 from app.models.campaign import Campaign
 from app.models.customer import Customer
@@ -64,6 +65,30 @@ class AnalyticsService:
         labels = [(start_date + timedelta(days=offset)).strftime("%d %b") for offset in range(30)]
         return RangeWindow(start=start, end=end, labels=labels)
 
+    def _customer_scope(self):
+        return shop_filter(self.db, Customer, self.shop_key)
+
+    def _bill_scope(self):
+        shop_id = resolve_shop_id(self.db, self.shop_key)
+        customer_scope = self._customer_scope()
+        if shop_id is None:
+            return customer_scope
+        return or_(Bill.shop_id == shop_id, and_(Bill.shop_id.is_(None), customer_scope))
+
+    def _prescription_scope(self):
+        shop_id = resolve_shop_id(self.db, self.shop_key)
+        customer_scope = self._customer_scope()
+        if shop_id is None:
+            return customer_scope
+        return or_(Prescription.shop_id == shop_id, and_(Prescription.shop_id.is_(None), customer_scope))
+
+    def _whatsapp_scope(self):
+        shop_id = resolve_shop_id(self.db, self.shop_key)
+        customer_scope = self._customer_scope()
+        if shop_id is None:
+            return customer_scope
+        return or_(WhatsAppLog.shop_id == shop_id, and_(WhatsAppLog.shop_id.is_(None), customer_scope))
+
     def _confirmed_bill_query(self):
         return (
             self.db.query(Bill)
@@ -71,23 +96,27 @@ class AnalyticsService:
             .filter(
                 Bill.is_deleted.is_(False),
                 Customer.is_deleted.is_(False),
-                Customer.shop_key == self.shop_key,
+                self._bill_scope(),
                 Bill.payment_status.in_([PaymentStatus.PAID, PaymentStatus.PARTIAL]),
             )
         )
+
+    @staticmethod
+    def _bill_revenue_amount(bill: Bill) -> Decimal:
+        return Decimal(bill.paid_total or bill.paid_amount or 0)
 
     def get_dashboard_summary(self, *, include_revenue: bool = True) -> DashboardSummaryResponse:
         now = datetime.now(UTC)
         today_start, today_end = self._day_bounds(now.date())
 
         total_customers = (
-            self.db.query(Customer.id).filter(Customer.is_deleted.is_(False), Customer.shop_key == self.shop_key).count()
+            self.db.query(Customer.id).filter(Customer.is_deleted.is_(False), self._customer_scope()).count()
         )
         today_customers = (
             self.db.query(Customer.id)
             .filter(
                 Customer.is_deleted.is_(False),
-                Customer.shop_key == self.shop_key,
+                self._customer_scope(),
                 Customer.created_at >= today_start,
                 Customer.created_at < today_end,
             )
@@ -100,7 +129,7 @@ class AnalyticsService:
             .filter(
                 Prescription.is_deleted.is_(False),
                 Customer.is_deleted.is_(False),
-                Customer.shop_key == self.shop_key,
+                self._prescription_scope(),
             )
             .count()
         )
@@ -111,7 +140,7 @@ class AnalyticsService:
             .filter(
                 Bill.is_deleted.is_(False),
                 Customer.is_deleted.is_(False),
-                Customer.shop_key == self.shop_key,
+                self._bill_scope(),
                 Bill.created_at >= today_start,
                 Bill.created_at < today_end,
             )
@@ -122,7 +151,7 @@ class AnalyticsService:
         if include_revenue:
             revenue_today_raw = (
                 self._confirmed_bill_query()
-                .with_entities(func.coalesce(func.sum(Bill.final_price), 0))
+                .with_entities(func.coalesce(func.sum(Bill.paid_total), 0))
                 .filter(Bill.created_at >= today_start, Bill.created_at < today_end)
                 .scalar()
             )
@@ -132,7 +161,7 @@ class AnalyticsService:
             self.db.query(Campaign.id)
             .filter(
                 Campaign.is_deleted.is_(False),
-                Campaign.shop_key == self.shop_key,
+                shop_filter(self.db, Campaign, self.shop_key),
                 Campaign.status == CampaignStatus.SCHEDULED,
             )
             .count()
@@ -143,7 +172,7 @@ class AnalyticsService:
             .join(Customer, Customer.id == WhatsAppLog.customer_id)
             .filter(
                 WhatsAppLog.status == WhatsAppStatus.FAILED,
-                Customer.shop_key == self.shop_key,
+                self._whatsapp_scope(),
             )
             .count()
         )
@@ -169,7 +198,7 @@ class AnalyticsService:
 
         total_revenue = Decimal("0.00")
         for bill in bills:
-            total_revenue += Decimal(bill.final_price)
+            total_revenue += self._bill_revenue_amount(bill)
 
         total_bills = len(bills)
         average_bill_value = float(total_revenue / total_bills) if total_bills > 0 else 0.0
@@ -199,7 +228,7 @@ class AnalyticsService:
             else:
                 key = created.strftime("%d %b")
             if key in series:
-                series[key] += float(bill.final_price)
+                series[key] += float(self._bill_revenue_amount(bill))
 
         points = [RevenueTimeseriesPoint(label=label, value=series[label]) for label in window.labels]
         return RevenueTimeseriesResponse(range_key=range_key, points=points)

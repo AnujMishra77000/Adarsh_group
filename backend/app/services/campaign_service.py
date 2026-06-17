@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import AppException
 from app.models.campaign import Campaign
 from app.models.campaign_log import CampaignLog
-from app.models.customer import Customer
 from app.models.enums import CampaignStatus, WhatsAppModuleType, WhatsAppStatus
 from app.models.user import User
 from app.repositories.campaign_log_repository import CampaignLogRepository
@@ -36,8 +35,8 @@ class CampaignService:
         self.repo = CampaignRepository(db)
         self.log_repo = CampaignLogRepository(db)
         self.customer_repo = CustomerRepository(db)
-        self.audit_service = AuditService(db)
-        self.whatsapp_service = WhatsAppService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
+        self.whatsapp_service = WhatsAppService(db, shop_key=shop_key)
 
     @staticmethod
     def _to_utc(value: datetime) -> datetime:
@@ -299,6 +298,9 @@ class CampaignService:
                 status=campaign.status.value,
             )
             return
+
+        self.audit_service.shop_key = campaign.shop_key
+        self.whatsapp_service.shop_key = campaign.shop_key
 
         campaign.status = CampaignStatus.RUNNING
         self.repo.save(campaign)

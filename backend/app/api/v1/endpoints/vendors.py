@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_roles
+from app.api.deps import get_shop_key, require_roles
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
@@ -21,10 +21,11 @@ def list_vendors(
     search: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ) -> VendorListResponse:
     _ = current_user
-    service = VendorService(db)
+    service = VendorService(db, shop_key=shop_key)
     return service.list_vendors(page=page, page_size=page_size, search=search, is_active=is_active)
 
 
@@ -32,9 +33,10 @@ def list_vendors(
 def create_vendor(
     payload: VendorCreate,
     db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> VendorRead:
-    service = VendorService(db)
+    service = VendorService(db, shop_key=shop_key)
     return service.create_vendor(payload=payload, actor=current_user)
 
 
@@ -42,10 +44,11 @@ def create_vendor(
 def get_vendor(
     vendor_id: int,
     db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ) -> VendorRead:
     _ = current_user
-    service = VendorService(db)
+    service = VendorService(db, shop_key=shop_key)
     return service.get_vendor(vendor_id=vendor_id)
 
 
@@ -54,9 +57,10 @@ def update_vendor(
     vendor_id: int,
     payload: VendorUpdate,
     db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> VendorRead:
-    service = VendorService(db)
+    service = VendorService(db, shop_key=shop_key)
     return service.update_vendor(vendor_id=vendor_id, payload=payload, actor=current_user)
 
 
@@ -64,8 +68,9 @@ def update_vendor(
 def delete_vendor(
     vendor_id: int,
     db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> MessageResponse:
-    service = VendorService(db)
+    service = VendorService(db, shop_key=shop_key)
     service.delete_vendor(vendor_id=vendor_id, actor=current_user)
     return MessageResponse(message="Vendor deactivated successfully")

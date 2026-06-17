@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
 from app.core.security import get_password_hash
+from app.db.shop_scope import shop_filter
 from app.models.audit_log import AuditLog
 from app.models.enums import UserRole
 from app.models.user import User
@@ -26,7 +27,7 @@ class StaffService:
         self.db = db
         self.shop_key = shop_key
         self.user_repo = UserRepository(db)
-        self.audit_service = AuditService(db)
+        self.audit_service = AuditService(db, shop_key=shop_key)
 
     def list_staff(
         self,
@@ -60,7 +61,7 @@ class StaffService:
         if self.user_repo.get_by_email(payload.email, shop_key=self.shop_key):
             raise AppException(status_code=409, code="email_exists", message="Email is already registered")
 
-        conflicting_shop = find_shop_with_email(payload.email, exclude_shop_key=self.shop_key)
+        conflicting_shop = find_shop_with_email(payload.email, exclude_shop_key=self.shop_key, db=self.db)
         if conflicting_shop:
             raise AppException(
                 status_code=409,
@@ -143,7 +144,7 @@ class StaffService:
             .filter(
                 AuditLog.action == "auth.login",
                 User.role == UserRole.STAFF,
-                User.shop_key == self.shop_key,
+                shop_filter(self.db, User, self.shop_key),
             )
         )
 

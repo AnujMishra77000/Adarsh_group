@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from sqlalchemy import Enum, ForeignKey, Integer, JSON, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base
-from app.models.enums import WhatsAppMessageType, WhatsAppModuleType, WhatsAppStatus
+from app.models.enums import WhatsAppMessageType, WhatsAppModuleType, WhatsAppStatus, enum_values
 from app.models.mixins import TimestampMixin
 
 
@@ -12,8 +12,9 @@ class WhatsAppLog(Base, TimestampMixin):
     __tablename__ = "whatsapp_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
     module_type: Mapped[WhatsAppModuleType] = mapped_column(
-        Enum(WhatsAppModuleType, name="whatsapp_module_type"),
+        Enum(WhatsAppModuleType, name="whatsapp_module_type", values_callable=enum_values),
         nullable=False,
     )
     reference_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -21,12 +22,14 @@ class WhatsAppLog(Base, TimestampMixin):
     vendor_id: Mapped[int | None] = mapped_column(ForeignKey("vendors.id", ondelete="SET NULL"), nullable=True, index=True)
     recipient_no: Mapped[str] = mapped_column(String(20), nullable=False)
     message_type: Mapped[WhatsAppMessageType] = mapped_column(
-        Enum(WhatsAppMessageType, name="whatsapp_message_type"),
+        Enum(WhatsAppMessageType, name="whatsapp_message_type", values_callable=enum_values),
         nullable=False,
     )
     template_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     media_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    status: Mapped[WhatsAppStatus] = mapped_column(Enum(WhatsAppStatus, name="whatsapp_status"), nullable=False)
+    status: Mapped[WhatsAppStatus] = mapped_column(Enum(WhatsAppStatus, name="whatsapp_status", values_callable=enum_values), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    shop = relationship("Shop", back_populates="whatsapp_logs")

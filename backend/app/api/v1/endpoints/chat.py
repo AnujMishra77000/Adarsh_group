@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_roles
 from app.core.exceptions import AppException
 from app.core.security import TokenDecodeError, decode_jwt_token
-from app.db.session import get_db
-from app.db.tenant import tenant_db_manager
+from app.db.session import SessionLocal, get_db
 from app.models.enums import UserRole
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
@@ -49,10 +48,12 @@ def _authenticate_websocket_user(token: str) -> User:
     if not shop_code:
         raise AppException(status_code=401, code="missing_shop_context", message="Missing shop context in token")
 
-    with tenant_db_manager.session_scope(shop_code) as db:
+    with SessionLocal() as db:
         user = UserRepository(db).get_by_id(user_id)
         if not user or not user.is_active:
             raise AppException(status_code=401, code="user_not_active", message="User account not active")
+        if user.shop_key != shop_code:
+            raise AppException(status_code=401, code="invalid_shop_context", message="Invalid shop context")
 
         db.expunge(user)
         return user
@@ -65,9 +66,8 @@ def list_chat_messages(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ) -> ChatMessageListResponse:
-    _ = current_user
     service = ChatService(db)
-    items, has_more = service.list_messages(limit=limit, before_id=before_id)
+    items, has_more = service.list_messages(limit=limit, before_id=before_id, actor=current_user)
     return ChatMessageListResponse(items=items, has_more=has_more)
 
 
@@ -115,9 +115,8 @@ def download_chat_attachment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ) -> Response:
-    _ = current_user
     service = ChatService(db)
-    message, payload, media_type = service.get_attachment_for_download(message_id=message_id)
+    message, payload, media_type = service.get_attachment_for_download(message_id=message_id, actor=current_user)
     headers = {
         "Content-Disposition": f'attachment; filename="{message.attachment_original_name}"',
     }
@@ -138,7 +137,7 @@ async def chat_ws(websocket: WebSocket) -> None:
         return
 
     gateway = _gateway_from_state(websocket)
-    await gateway.connect(websocket)
+    await gateway.connect(websocket, shop_key=user.shop_key)
 
     await websocket.send_text(
         json.dumps(

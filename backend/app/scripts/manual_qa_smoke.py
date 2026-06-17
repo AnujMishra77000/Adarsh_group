@@ -83,6 +83,7 @@ def run_qa(
     client: SupportsRequest,
     *,
     result: QaResult,
+    shop_code: str,
     admin_email: str,
     admin_password: str,
     strict_external: bool,
@@ -98,7 +99,7 @@ def run_qa(
     login_resp = client.request(
         "POST",
         "/auth/login",
-        json={"email": admin_email, "password": admin_password},
+        json={"shop_code": shop_code, "email": admin_email, "password": admin_password},
     )
     if not _assert_status(result=result, step="Admin login", response=login_resp, allowed={200}):
         return 1
@@ -314,7 +315,8 @@ def run_qa(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manual QA smoke flow for Eye Boutique CRM")
     parser.add_argument("--base-url", default="http://localhost:8000/api/v1", help="API base URL for live HTTP mode")
-    parser.add_argument("--admin-email", default="admin@aadarsh-eye.com")
+    parser.add_argument("--shop-code", default="adarsh-eye-boutique")
+    parser.add_argument("--admin-email", default="admin+adarsh-eye-boutique@adarsh-optical.local")
     parser.add_argument("--admin-password", default="Admin@12345")
     parser.add_argument(
         "--strict-external",
@@ -339,6 +341,7 @@ def main() -> int:
             run_qa(
                 client,
                 result=result,
+                shop_code=args.shop_code,
                 admin_email=args.admin_email,
                 admin_password=args.admin_password,
                 strict_external=args.strict_external,
@@ -348,6 +351,7 @@ def main() -> int:
             run_qa(
                 client,
                 result=result,
+                shop_code=args.shop_code,
                 admin_email=args.admin_email,
                 admin_password=args.admin_password,
                 strict_external=args.strict_external,

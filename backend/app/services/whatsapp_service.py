@@ -31,8 +31,9 @@ class WhatsAppSendResult:
 
 
 class WhatsAppService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, shop_key: str | None = None):
         self.db = db
+        self.shop_key = shop_key
         self.repo = WhatsAppLogRepository(db)
 
     def _require_configuration(self) -> None:
@@ -171,6 +172,7 @@ class WhatsAppService:
         media_id: str | None = None,
         provider_message_id: str | None = None,
         error_message: str | None = None,
+        shop_key: str | None = None,
     ) -> WhatsAppLog:
         log_row = WhatsAppLog(
             module_type=module_type,
@@ -186,7 +188,7 @@ class WhatsAppService:
             error_message=error_message,
             payload_json=payload_json,
         )
-        return self.repo.create(log_row)
+        return self.repo.create(log_row, shop_key=shop_key or self.shop_key)
 
     def upload_media(self, file_path: str | Path) -> str:
         path = Path(file_path)

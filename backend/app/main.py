@@ -38,7 +38,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.backend_cors_origins,
+    allow_origins=settings.effective_backend_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,7 +57,12 @@ async def shop_context_middleware(request: Request, call_next):
 
 media_root = settings.media_root_path
 media_root.mkdir(parents=True, exist_ok=True)
-app.mount(settings.media_url_prefix, StaticFiles(directory=str(media_root)), name="media")
+settings.invoice_media_dir.mkdir(parents=True, exist_ok=True)
+settings.prescription_media_dir.mkdir(parents=True, exist_ok=True)
+settings.chat_storage_root_path.mkdir(parents=True, exist_ok=True)
+
+if not settings.is_production:
+    app.mount(settings.media_url_prefix, StaticFiles(directory=str(media_root)), name="media")
 
 register_exception_handlers(app)
 
