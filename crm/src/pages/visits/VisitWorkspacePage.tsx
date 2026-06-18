@@ -3,7 +3,16 @@ import { ArrowLeft, FileText, Receipt } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 
-import { activateContactLensWorkup, getVisit, listVisitExamSectionHistory, listVisitExamSections, saveVisitExamSection } from "@/features/visits/api";
+import {
+  activateContactLensWorkup,
+  changeVisitFollowUpStatus,
+  createVisitFollowUp,
+  getVisit,
+  listVisitExamSectionHistory,
+  listVisitExamSections,
+  listVisitFollowUps,
+  saveVisitExamSection
+} from "@/features/visits/api";
 import { getErrorMessage } from "@/lib/errors";
 import { CRM_PATHS } from "@/lib/routes";
 import {
@@ -31,7 +40,13 @@ import { FinalPrescriptionWorkspace } from "@/pages/visits/components/FinalPresc
 import { DispensingOrderWorkspace } from "@/pages/visits/components/DispensingOrderWorkspace";
 import { VisitBillingWorkspace } from "@/pages/visits/components/VisitBillingWorkspace";
 import { ContactLensWorkspace } from "@/pages/visits/components/ContactLensWorkspace";
-import type { ExamSectionState, VisitExamSection, VisitExamSectionHistoryItem } from "@/types/visit";
+import type {
+  ExamSectionState,
+  FollowUpReminderState,
+  FollowUpType,
+  VisitExamSection,
+  VisitExamSectionHistoryItem
+} from "@/types/visit";
 
 type EditableExamSectionState = Exclude<ExamSectionState, "future">;
 type SectionPayload = Record<string, unknown>;
@@ -172,6 +187,7 @@ export function VisitWorkspacePage() {
   const isDispensingOrderSection = activeSection?.key === "frame_dispensing" || activeSection?.key === "lens_order";
   const isBillingSection = activeSection?.key === "billing";
   const isContactLensSection = activeSection?.key === "contact_lens";
+  const isFollowUpSection = activeSection?.key === "completion_follow_up";
 
   useEffect(() => {
     if (!activeSection) {
@@ -348,7 +364,7 @@ export function VisitWorkspacePage() {
                 <p className="mt-1 text-sm text-slate-300">{activeSection.description}</p>
               </div>
 
-              {!isFinalPrescriptionSection && !isDispensingOrderSection && !isBillingSection && !isContactLensSection && <label className="block min-w-[210px] text-sm text-slate-200">
+              {!isFinalPrescriptionSection && !isDispensingOrderSection && !isBillingSection && !isContactLensSection && !isFollowUpSection && <label className="block min-w-[210px] text-sm text-slate-200">
                 <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Section State</span>
                 <select
                   value={draftState}
@@ -380,6 +396,8 @@ export function VisitWorkspacePage() {
               <VisitBillingWorkspace visit={visitQuery.data} />
             ) : isContactLensSection ? (
               <ContactLensWorkspace visit={visitQuery.data} onDirtyChange={setContactLensDirty} />
+            ) : isFollowUpSection ? (
+              <OperationalFollowUpWorkspace visitId={visitQuery.data.id} />
             ) : (
               <>
                 <PreviousValuesPanel items={activeHistory} isLoading={historyQuery.isLoading} />
@@ -394,6 +412,87 @@ export function VisitWorkspacePage() {
             )}
           </section>
         </div>
+      )}
+    </div>
+  );
+}
+
+function OperationalFollowUpWorkspace({ visitId }: { visitId: number }) {
+  const queryClient = useQueryClient();
+  const [taskType, setTaskType] = useState<FollowUpType>("custom");
+  const [dueDate, setDueDate] = useState("");
+  const [assignedStaffId, setAssignedStaffId] = useState("");
+  const [reminderState, setReminderState] = useState<FollowUpReminderState>("not_scheduled");
+  const [notes, setNotes] = useState("");
+  const [completionNotes, setCompletionNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const followUpsQuery = useQuery({
+    queryKey: ["visits", visitId, "follow-ups"],
+    queryFn: () => listVisitFollowUps(visitId)
+  });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["visits", visitId, "follow-ups"] });
+    queryClient.invalidateQueries({ queryKey: ["customer-record-detail"] });
+  };
+  const createMutation = useMutation({
+    mutationFn: () => createVisitFollowUp(visitId, {
+      task_type: taskType,
+      due_date: dueDate,
+      assigned_staff_id: assignedStaffId ? Number(assignedStaffId) : null,
+      reminder_state: reminderState,
+      notes: notes || null
+    }),
+    onSuccess: () => {
+      setNotes("");
+      setError(null);
+      refresh();
+    },
+    onError: (reason) => setError(getErrorMessage(reason))
+  });
+  const statusMutation = useMutation({
+    mutationFn: ({ taskId, status }: { taskId: number; status: "completed" | "cancelled" }) =>
+      changeVisitFollowUpStatus(visitId, taskId, {
+        status,
+        completion_notes: status === "completed" ? completionNotes || null : null
+      }),
+    onSuccess: () => {
+      setCompletionNotes("");
+      setError(null);
+      refresh();
+    },
+    onError: (reason) => setError(getErrorMessage(reason))
+  });
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h4 className="text-lg font-semibold text-slate-100">Operational Follow-ups</h4>
+        <p className="text-sm text-slate-400">Schedule clinical reviews here. Use the existing Campaigns and communication tools for outbound reminders.</p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="text-sm text-slate-200"><span className="mb-1 block text-xs uppercase text-slate-400">Follow-up Type</span><select aria-label="Follow-up Type" value={taskType} onChange={(event) => setTaskType(event.target.value as FollowUpType)} className={textInputClass()}><option value="contact_lens">Contact lens</option><option value="progressive_adaptation">Progressive adaptation</option><option value="pediatric_review">Pediatric review</option><option value="referral_follow_up">Referral follow-up</option><option value="dry_eye_review">Dry-eye review</option><option value="custom">Custom</option></select></label>
+        <TextField label="Due Date" type="date" value={dueDate} onChange={setDueDate} />
+        <TextField label="Assigned Staff ID" type="number" value={assignedStaffId} onChange={setAssignedStaffId} />
+        <label className="text-sm text-slate-200"><span className="mb-1 block text-xs uppercase text-slate-400">Reminder State</span><select aria-label="Reminder State" value={reminderState} onChange={(event) => setReminderState(event.target.value as FollowUpReminderState)} className={textInputClass()}><option value="not_scheduled">Not scheduled</option><option value="scheduled">Scheduled</option><option value="sent">Sent</option><option value="failed">Failed</option></select></label>
+        <div className="md:col-span-2"><TextAreaField label="Follow-up Notes" value={notes} onChange={setNotes} /></div>
+      </div>
+      <button type="button" disabled={!dueDate || createMutation.isPending} onClick={() => createMutation.mutate()} className="rounded-lg border border-pink-300/35 px-4 py-2 text-sm font-semibold text-pink-100 disabled:opacity-50">Schedule Follow-up</button>
+      {error && <p role="alert" className="text-sm text-rose-200">{error}</p>}
+      {followUpsQuery.isLoading && <p className="text-sm text-slate-300">Loading follow-ups...</p>}
+      {(followUpsQuery.data?.items ?? []).length > 0 && (
+        <section className="space-y-3 border-t border-slate-700/60 pt-4">
+          <TextAreaField label="Completion Notes" value={completionNotes} onChange={setCompletionNotes} />
+          {(followUpsQuery.data?.items ?? []).map((task) => (
+            <article key={task.id} className="rounded-lg border border-slate-700/70 bg-matte-900/60 p-3 text-sm text-slate-200">
+              <p className="font-semibold text-pink-100">{formatStatus(task.task_type)} · due {new Date(`${task.due_date}T00:00:00`).toLocaleDateString()}</p>
+              <p className="text-xs text-slate-400">{formatStatus(task.status)} · reminder {formatStatus(task.reminder_state)}{task.assigned_staff_id ? ` · staff #${task.assigned_staff_id}` : ""}</p>
+              {task.notes && <p className="mt-1">{task.notes}</p>}
+              {task.completion_notes && <p className="mt-1 text-emerald-100">Completed: {task.completion_notes}</p>}
+              {task.status === "pending" && <div className="mt-3 flex gap-2"><button type="button" onClick={() => statusMutation.mutate({ taskId: task.id, status: "completed" })} className="rounded-md border border-emerald-300/35 px-2 py-1 text-emerald-100">Complete</button><button type="button" onClick={() => statusMutation.mutate({ taskId: task.id, status: "cancelled" })} className="rounded-md border border-rose-300/35 px-2 py-1 text-rose-100">Cancel</button></div>}
+            </article>
+          ))}
+        </section>
       )}
     </div>
   );

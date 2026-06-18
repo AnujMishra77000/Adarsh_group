@@ -247,7 +247,9 @@ def test_contact_lens_order_uses_saved_workup_and_has_controlled_status(db_sessi
     assert order.workup_snapshot["prescription"]["right"]["power"] == "-2.00"
     assert order.workup_snapshot["prescription"]["left"]["power"] == "-1.75"
     assert order.status == DispensingOrderStatus.DRAFT
+    assert order.events[0].event == "contact_lens_ordered"
     assert ready.status == DispensingOrderStatus.READY_FOR_VENDOR
+    assert ready.events[-1].previous_status == DispensingOrderStatus.DRAFT
 
     with pytest.raises(AppException) as invalid:
         service.change_order_status(
@@ -304,6 +306,65 @@ def test_contact_lens_follow_up_is_idempotent_and_preserves_completion(db_sessio
             actor,
         )
     assert preserved.value.code == "contact_lens_follow_up_read_only"
+
+
+def test_general_follow_up_tracks_assignment_reminder_and_completion_notes(db_session: Session, make_user) -> None:
+    from app.models.enums import FollowUpReminderState, FollowUpStatus, FollowUpType
+    from app.schemas.contact_lens import FollowUpCreate, FollowUpStatusUpdate
+    from app.services.contact_lens_service import ContactLensService
+
+    actor, _patient, visit = _create_visit(db_session, make_user, reason="Pediatric review")
+    service = ContactLensService(db_session, TEST_SHOP_ONE)
+
+    created = service.create_follow_up(
+        visit.id,
+        FollowUpCreate(
+            task_type=FollowUpType.PEDIATRIC_REVIEW,
+            due_date=date.today() + timedelta(days=30),
+            assigned_staff_id=actor.id,
+            reminder_state=FollowUpReminderState.SCHEDULED,
+            notes="Review cycloplegic response",
+        ),
+        actor,
+    )
+
+    assert created.task_type == FollowUpType.PEDIATRIC_REVIEW
+    assert created.assigned_staff_id == actor.id
+    assert created.reminder_state == FollowUpReminderState.SCHEDULED
+    assert service.list_follow_ups(visit.id, actor).items[0].id == created.id
+
+    completed = service.change_follow_up_status_by_id(
+        visit.id,
+        created.id,
+        FollowUpStatusUpdate(status=FollowUpStatus.COMPLETED, completion_notes="Stable; review in one year"),
+        actor,
+    )
+
+    assert completed.completed_by == actor.id
+    assert completed.completed_at is not None
+    assert completed.completion_notes == "Stable; review in one year"
+
+    with pytest.raises(AppException) as terminal:
+        service.change_follow_up_status_by_id(
+            visit.id,
+            created.id,
+            FollowUpStatusUpdate(status=FollowUpStatus.CANCELLED),
+            actor,
+        )
+    assert terminal.value.code == "follow_up_invalid_status_transition"
+
+
+def test_all_required_follow_up_types_are_supported() -> None:
+    from app.models.enums import FollowUpType
+
+    assert {item.value for item in FollowUpType} == {
+        "contact_lens",
+        "progressive_adaptation",
+        "pediatric_review",
+        "referral_follow_up",
+        "dry_eye_review",
+        "custom",
+    }
 
 
 def test_contact_lens_order_bill_reuses_official_totals_and_allows_replacement_after_delete(
@@ -372,6 +433,8 @@ def test_contact_lens_history_contains_order_and_follow_up_without_cross_shop_ac
     assert len(detail.follow_up_tasks) == 1
     assert detail.follow_up_tasks[0].id == follow_up.id
     assert detail.follow_up_tasks[0].due_date == follow_up.due_date
+    timeline_events = {item.event for item in detail.timeline}
+    assert {"visit", "contact_lens_ordered", "follow_up_scheduled"}.issubset(timeline_events)
 
     with pytest.raises(AppException) as hidden:
         CustomerService(db_session, TEST_SHOP_TWO).get_customer(patient.id)

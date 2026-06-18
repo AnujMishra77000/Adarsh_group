@@ -6,7 +6,6 @@ Production-grade CRM, backend API, and public website for an optical business.
 - `backend/` - FastAPI API, database models, Alembic migrations, background workers.
 - `crm/` - independent React/Vite CRM app for shop entry, login, dashboard, customers, billing, prescriptions, chat, campaigns, analytics, and staff management.
 - `website/` - independent React/Vite public website for Adarsh Optical Group.
-- `frontend/` - legacy combined frontend retained temporarily during the split. Use `crm/` and `website/` for new development.
 
 ## Completed Modules
 - JWT auth with refresh tokens (`admin`, `staff` roles)

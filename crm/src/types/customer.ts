@@ -64,18 +64,38 @@ export type CustomerContactLensOrderSummary = {
   order_reference: string;
   status: "draft" | "ready_for_vendor" | "sent_to_vendor" | "in_production" | "ready_for_delivery" | "delivered" | "cancelled";
   vendor_id: number | null;
+  delivered_by: number | null;
+  delivered_at: string | null;
   created_at: string;
 };
+
+export type CustomerDispensingOrderSummary = CustomerContactLensOrderSummary;
 
 export type CustomerFollowUpTaskSummary = {
   id: number;
   visit_id: number;
-  contact_lens_order_id: number;
+  contact_lens_order_id: number | null;
   task_type: string;
   due_date: string;
   status: "pending" | "completed" | "cancelled";
   notes: string | null;
+  assigned_staff_id: number | null;
+  reminder_state: "not_scheduled" | "scheduled" | "sent" | "failed";
+  completion_notes: string | null;
   completed_at: string | null;
+};
+
+export type CustomerTimelineItem = {
+  event: string;
+  occurred_at: string;
+  label: string;
+  visit_id: number | null;
+  entity_type: string;
+  entity_id: number;
+  status: string | null;
+  user_id: number | null;
+  notes: string | null;
+  previous_status: string | null;
 };
 
 export type CustomerDetail = Customer & {
@@ -83,8 +103,10 @@ export type CustomerDetail = Customer & {
   referrals: CustomerReferralSummary[];
   prescriptions: CustomerPrescriptionSummary[];
   bills: CustomerBillSummary[];
+  dispensing_orders: CustomerDispensingOrderSummary[];
   contact_lens_orders: CustomerContactLensOrderSummary[];
   follow_up_tasks: CustomerFollowUpTaskSummary[];
+  timeline: CustomerTimelineItem[];
 };
 
 export type CustomerPayload = {

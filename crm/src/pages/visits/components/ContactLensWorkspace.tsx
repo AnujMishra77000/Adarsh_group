@@ -67,6 +67,8 @@ export function ContactLensWorkspace({ visit, onDirtyChange }: { visit: Visit; o
   const [error, setError] = useState<string | null>(null);
   const [vendorId, setVendorId] = useState<number | null>(null);
   const [orderNotes, setOrderNotes] = useState("");
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
+  const [statusNotes, setStatusNotes] = useState("");
   const [followUpInterval, setFollowUpInterval] = useState<FollowUpInterval>("one_week");
   const [followUpDate, setFollowUpDate] = useState("");
   const [followUpNotes, setFollowUpNotes] = useState("");
@@ -90,6 +92,7 @@ export function ContactLensWorkspace({ visit, onDirtyChange }: { visit: Visit; o
     }
     setVendorId(context.order?.vendor_id ?? null);
     setOrderNotes(context.order?.order_notes ?? "");
+    setExpectedDeliveryDate(context.order?.expected_delivery_date ?? "");
     setFollowUpInterval(context.follow_up?.interval ?? "one_week");
     setFollowUpDate(context.follow_up?.due_date ?? "");
     setFollowUpNotes(context.follow_up?.notes ?? "");
@@ -121,13 +124,18 @@ export function ContactLensWorkspace({ visit, onDirtyChange }: { visit: Visit; o
     onError: (reason) => { setSaveState("failed"); setError(getErrorMessage(reason)); }
   });
   const orderMutation = useMutation({
-    mutationFn: () => saveContactLensOrder(visit.id, { vendor_id: vendorId, lens_details: form.lens_details, order_notes: orderNotes || null }),
+    mutationFn: () => saveContactLensOrder(visit.id, {
+      vendor_id: vendorId,
+      lens_details: form.lens_details,
+      order_notes: orderNotes || null,
+      expected_delivery_date: expectedDeliveryDate || null
+    }),
     onSuccess: refresh,
     onError: (reason) => setError(getErrorMessage(reason))
   });
   const orderStatusMutation = useMutation({
-    mutationFn: (status: DispensingOrderStatus) => changeContactLensOrderStatus(visit.id, status),
-    onSuccess: refresh,
+    mutationFn: (status: DispensingOrderStatus) => changeContactLensOrderStatus(visit.id, status, statusNotes || null),
+    onSuccess: () => { setStatusNotes(""); refresh(); },
     onError: (reason) => setError(getErrorMessage(reason))
   });
   const followUpMutation = useMutation({
@@ -180,14 +188,19 @@ export function ContactLensWorkspace({ visit, onDirtyChange }: { visit: Visit; o
       {tab === "training" && <TrainingTab form={form} markDirty={markDirty} />}
       {tab === "order" && (
         <div className="space-y-4">
-          {context?.order && <p className="text-sm text-slate-200">{context.order.order_reference} · {statusLabel(context.order.status)}</p>}
+          {context?.order && <p className={`text-sm ${context.order.status === "cancelled" ? "text-rose-200" : context.order.is_delayed ? "text-amber-200" : "text-slate-200"}`}>{context.order.order_reference} · {statusLabel(context.order.status)}{context.order.is_delayed ? " · Delayed" : ""}</p>}
           <label className="block text-sm text-slate-200"><span className="mb-1 block text-xs uppercase text-slate-400">Vendor</span><select aria-label="Contact Lens Vendor" value={vendorId ?? ""} onChange={(event) => setVendorId(event.target.value ? Number(event.target.value) : null)} className={inputClass()}><option value="">Select vendor</option>{(vendorsQuery.data?.items ?? []).map((vendor) => <option key={vendor.id} value={vendor.id}>{vendor.vendor_name}</option>)}</select></label>
           <TextArea label="Order Notes" value={orderNotes} onChange={setOrderNotes} />
+          <Field label="Expected Delivery Date" type="date" value={expectedDeliveryDate} onChange={setExpectedDeliveryDate} />
+          {context?.order && !["delivered", "cancelled"].includes(context.order.status) && <TextArea label="Status Change Notes" value={statusNotes} onChange={setStatusNotes} />}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => orderMutation.mutate()} className="rounded-lg border border-pink-300/35 px-3 py-2 text-sm font-semibold text-pink-100">{context?.order ? "Update Order" : "Create Order"}</button>
             {context?.order && ORDER_NEXT[context.order.status] && <button type="button" onClick={() => orderStatusMutation.mutate(ORDER_NEXT[context.order!.status]!)} className="rounded-lg border border-emerald-300/35 px-3 py-2 text-sm font-semibold text-emerald-100">Mark {statusLabel(ORDER_NEXT[context.order.status]!)}</button>}
+            {context?.order && !["delivered", "cancelled"].includes(context.order.status) && <button type="button" onClick={() => orderStatusMutation.mutate("cancelled")} className="rounded-lg border border-rose-300/35 px-3 py-2 text-sm font-semibold text-rose-100">Cancel Order</button>}
             {context?.order && (context.active_bill_id ? <Link to={`${CRM_PATHS.billing}/view/${context.active_bill_id}?${new URLSearchParams({ return_to: `${CRM_PATHS.visitWorkspace}/${visit.id}` }).toString()}`} className="rounded-lg border border-indigo-300/35 px-3 py-2 text-sm font-semibold text-indigo-100">Open Bill</Link> : <Link to={billingUrl} className="rounded-lg border border-indigo-300/35 px-3 py-2 text-sm font-semibold text-indigo-100">Create Bill</Link>)}
           </div>
+          {context?.order?.delivered_at && <p className="text-sm text-emerald-100">Delivered {new Date(context.order.delivered_at).toLocaleString()} by user #{context.order.delivered_by ?? "unknown"}</p>}
+          {context?.order && (context.order.events?.length ?? 0) > 0 && <section><h4 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Order Event History</h4><ul className="mt-2 space-y-2">{(context.order.events ?? []).map((event) => <li key={event.id} className="rounded-lg border border-slate-700/70 p-3 text-sm text-slate-200"><p className="font-semibold text-pink-100">{statusLabel(event.event)}</p><p className="text-xs text-slate-400">{new Date(event.occurred_at).toLocaleString()} · user #{event.user_id ?? "system"}</p>{event.notes && <p>{event.notes}</p>}</li>)}</ul></section>}
         </div>
       )}
       {tab === "followup" && (

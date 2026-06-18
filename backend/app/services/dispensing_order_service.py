@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.shops import get_shop_definition
-from app.models.dispensing_order import DispensingOrder
+from app.db.shop_scope import assign_shop_scope
+from app.models.dispensing_order import DispensingOrder, OrderStatusEvent
 from app.models.enums import DispensingOrderStatus, PrescriptionVersionStatus, WhatsAppModuleType, WhatsAppStatus
 from app.models.user import User
 from app.models.visit import Visit
@@ -38,6 +39,15 @@ from app.services.whatsapp_service import WhatsAppService
 
 
 class DispensingOrderService:
+    STATUS_EVENTS = {
+        DispensingOrderStatus.READY_FOR_VENDOR: "ready_for_vendor",
+        DispensingOrderStatus.SENT_TO_VENDOR: "vendor_order_sent",
+        DispensingOrderStatus.IN_PRODUCTION: "order_in_production",
+        DispensingOrderStatus.READY_FOR_DELIVERY: "ready_for_delivery",
+        DispensingOrderStatus.DELIVERED: "delivered",
+        DispensingOrderStatus.CANCELLED: "cancelled",
+        DispensingOrderStatus.DRAFT: "returned_to_draft",
+    }
     STATUS_TRANSITIONS = {
         DispensingOrderStatus.DRAFT: {DispensingOrderStatus.READY_FOR_VENDOR, DispensingOrderStatus.CANCELLED},
         DispensingOrderStatus.READY_FOR_VENDOR: {DispensingOrderStatus.DRAFT, DispensingOrderStatus.CANCELLED},
@@ -86,6 +96,11 @@ class DispensingOrderService:
 
     @staticmethod
     def _serialize(order: DispensingOrder) -> DispensingOrderRead:
+        is_delayed = bool(
+            order.expected_delivery_date
+            and order.expected_delivery_date < date.today()
+            and order.status not in {DispensingOrderStatus.DELIVERED, DispensingOrderStatus.CANCELLED}
+        )
         return DispensingOrderRead(
             id=order.id,
             visit_id=order.visit_id,
@@ -103,11 +118,39 @@ class DispensingOrderService:
             has_vendor_document=bool(order.vendor_document_file_path),
             sent_by=order.sent_by,
             sent_at=order.sent_at,
+            expected_delivery_date=order.expected_delivery_date,
+            delivered_by=order.delivered_by,
+            delivered_at=order.delivered_at,
+            is_delayed=is_delayed,
+            events=list(order.status_events),
             created_by=order.created_by,
             updated_by=order.updated_by,
             created_at=order.created_at,
             updated_at=order.updated_at,
         )
+
+    def _record_status_event(
+        self,
+        order: DispensingOrder,
+        *,
+        event: str,
+        status: DispensingOrderStatus,
+        actor: User,
+        previous_status: DispensingOrderStatus | None = None,
+        notes: str | None = None,
+    ) -> None:
+        item = OrderStatusEvent(
+            shop_key=self.shop_key,
+            dispensing_order_id=order.id,
+            event=event,
+            previous_status=previous_status.value if previous_status else None,
+            status=status.value,
+            user_id=actor.id,
+            notes=notes,
+        )
+        assign_shop_scope(item, self.db, self.shop_key)
+        self.db.add(item)
+        self.db.flush()
 
     def _get_order(self, visit_id: int) -> DispensingOrder:
         order = self.repo.get_by_visit(visit_id, self.shop_key)
@@ -179,6 +222,7 @@ class DispensingOrderService:
                 status=DispensingOrderStatus.DRAFT,
                 created_by=actor.id,
                 updated_by=actor.id,
+                expected_delivery_date=payload.expected_delivery_date,
             )
             action = "dispensing_order.create"
         else:
@@ -196,11 +240,20 @@ class DispensingOrderService:
         order.measurement_data = payload.measurements.model_dump(mode="json", exclude_none=True)
         order.lens_data = payload.lens.model_dump(mode="json", exclude_none=True)
         order.manufacturing_instructions = payload.manufacturing_instructions
+        order.expected_delivery_date = payload.expected_delivery_date
         order.vendor_document_file_path = None
 
         try:
-            if order.id is None:
+            is_new = order.id is None
+            if is_new:
                 self.repo.create(order)
+                self._record_status_event(
+                    order,
+                    event="spectacle_ordered",
+                    status=DispensingOrderStatus.DRAFT,
+                    actor=actor,
+                    notes="Spectacle order created",
+                )
             else:
                 self.repo.save(order)
             self.audit_service.log(
@@ -285,7 +338,18 @@ class DispensingOrderService:
         previous = order.status
         order.status = payload.status
         order.updated_by = actor.id
+        if payload.status == DispensingOrderStatus.DELIVERED:
+            order.delivered_by = actor.id
+            order.delivered_at = datetime.now(UTC)
         self.repo.save(order)
+        self._record_status_event(
+            order,
+            event=self.STATUS_EVENTS[payload.status],
+            previous_status=previous,
+            status=payload.status,
+            actor=actor,
+            notes=payload.notes,
+        )
         self.audit_service.log(
             actor_user_id=actor.id,
             action="dispensing_order.status_change",
@@ -410,6 +474,14 @@ class DispensingOrderService:
         order.sent_at = datetime.now(UTC)
         order.updated_by = actor.id
         self.repo.save(order)
+        self._record_status_event(
+            order,
+            event="vendor_order_sent",
+            previous_status=DispensingOrderStatus.READY_FOR_VENDOR,
+            status=DispensingOrderStatus.SENT_TO_VENDOR,
+            actor=actor,
+            notes=payload.caption,
+        )
         self.db.commit()
         return DispensingOrderSendVendorResponse(
             message="Spectacle order sent to vendor on WhatsApp",

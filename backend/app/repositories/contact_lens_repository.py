@@ -15,7 +15,7 @@ class ContactLensRepository:
             self.db.query(ContactLensOrder)
             .options(
                 joinedload(ContactLensOrder.vendor),
-                joinedload(ContactLensOrder.follow_up_task),
+                joinedload(ContactLensOrder.follow_up_tasks),
                 joinedload(ContactLensOrder.bills),
             )
             .filter(
@@ -28,7 +28,7 @@ class ContactLensRepository:
     def get_order_by_id(self, order_id: int, shop_key: str) -> ContactLensOrder | None:
         return (
             self.db.query(ContactLensOrder)
-            .options(joinedload(ContactLensOrder.vendor), joinedload(ContactLensOrder.follow_up_task))
+            .options(joinedload(ContactLensOrder.vendor), joinedload(ContactLensOrder.follow_up_tasks))
             .filter(
                 ContactLensOrder.id == order_id,
                 shop_filter(self.db, ContactLensOrder, shop_key),
@@ -48,10 +48,31 @@ class ContactLensRepository:
         self.db.flush()
         return order
 
-    def get_follow_up_by_visit(self, visit_id: int, shop_key: str) -> FollowUpTask | None:
+    def get_follow_up_by_visit(self, visit_id: int, shop_key: str, task_type: str | None = None) -> FollowUpTask | None:
+        query = self.db.query(FollowUpTask).filter(
+            FollowUpTask.visit_id == visit_id,
+            shop_filter(self.db, FollowUpTask, shop_key),
+        )
+        if task_type is not None:
+            query = query.filter(FollowUpTask.task_type == task_type)
+        return query.order_by(FollowUpTask.created_at.desc()).first()
+
+    def list_follow_ups_by_visit(self, visit_id: int, shop_key: str) -> list[FollowUpTask]:
         return (
             self.db.query(FollowUpTask)
             .filter(
+                FollowUpTask.visit_id == visit_id,
+                shop_filter(self.db, FollowUpTask, shop_key),
+            )
+            .order_by(FollowUpTask.due_date.asc(), FollowUpTask.created_at.asc())
+            .all()
+        )
+
+    def get_follow_up_by_id(self, task_id: int, visit_id: int, shop_key: str) -> FollowUpTask | None:
+        return (
+            self.db.query(FollowUpTask)
+            .filter(
+                FollowUpTask.id == task_id,
                 FollowUpTask.visit_id == visit_id,
                 shop_filter(self.db, FollowUpTask, shop_key),
             )

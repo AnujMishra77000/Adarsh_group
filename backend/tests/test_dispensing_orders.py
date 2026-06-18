@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -197,10 +197,13 @@ def test_dispensing_order_status_transitions_are_controlled(db_session: Session,
 
     ready = service.change_status(
         visit.id,
-        DispensingOrderStatusUpdate(status=DispensingOrderStatus.READY_FOR_VENDOR),
+        DispensingOrderStatusUpdate(status=DispensingOrderStatus.READY_FOR_VENDOR, notes="Measurements approved"),
         actor,
     )
     assert ready.status == DispensingOrderStatus.READY_FOR_VENDOR
+    assert [event.event for event in ready.events] == ["spectacle_ordered", "ready_for_vendor"]
+    assert ready.events[-1].previous_status == DispensingOrderStatus.DRAFT
+    assert ready.events[-1].notes == "Measurements approved"
 
     with pytest.raises(AppException) as invalid_transition:
         service.change_status(
@@ -316,4 +319,49 @@ def test_vendor_send_reuses_whatsapp_and_records_sent_status(
     assert uploaded == [file_path]
     assert result.whatsapp_log_id == 71
     assert result.provider_message_id == "wamid.phase7"
-    assert service.get_context(visit.id, actor).order.status == DispensingOrderStatus.SENT_TO_VENDOR
+    sent = service.get_context(visit.id, actor).order
+    assert sent.status == DispensingOrderStatus.SENT_TO_VENDOR
+    assert sent.events[-1].event == "vendor_order_sent"
+    assert sent.events[-1].user_id == actor.id
+
+    service.change_status(
+        visit.id,
+        DispensingOrderStatusUpdate(status=DispensingOrderStatus.IN_PRODUCTION, notes="Lab confirmed"),
+        actor,
+    )
+    service.change_status(
+        visit.id,
+        DispensingOrderStatusUpdate(status=DispensingOrderStatus.READY_FOR_DELIVERY),
+        actor,
+    )
+    delivered = service.change_status(
+        visit.id,
+        DispensingOrderStatusUpdate(status=DispensingOrderStatus.DELIVERED, notes="Collected by patient"),
+        actor,
+    )
+
+    assert delivered.delivered_by == actor.id
+    assert delivered.delivered_at is not None
+    assert delivered.events[-1].event == "delivered"
+    assert delivered.events[-1].previous_status == DispensingOrderStatus.READY_FOR_DELIVERY
+    assert delivered.events[-1].notes == "Collected by patient"
+
+    with pytest.raises(AppException) as terminal:
+        service.change_status(
+            visit.id,
+            DispensingOrderStatusUpdate(status=DispensingOrderStatus.CANCELLED),
+            actor,
+        )
+    assert terminal.value.code == "dispensing_order_invalid_status_transition"
+
+
+def test_dispensing_order_reports_delay_without_losing_status_history(db_session: Session, make_user) -> None:
+    actor, _patient, visit, _prescription = _create_finalized_visit(db_session, make_user)
+    service = DispensingOrderService(db_session, shop_key=TEST_SHOP_ONE)
+    payload = _order_payload()
+    payload.expected_delivery_date = date.today() - timedelta(days=1)
+
+    created = service.save_draft(visit.id, payload, actor)
+
+    assert created.is_delayed is True
+    assert created.events[0].event == "spectacle_ordered"

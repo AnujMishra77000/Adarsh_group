@@ -218,6 +218,17 @@ export type DispensingOrderPayload = {
   lens: LensSpecification;
   vendor_id: number | null;
   manufacturing_instructions: string | null;
+  expected_delivery_date?: string | null;
+};
+
+export type OrderStatusEvent = {
+  id: number;
+  event: string;
+  previous_status: DispensingOrderStatus | null;
+  status: DispensingOrderStatus;
+  user_id: number | null;
+  notes: string | null;
+  occurred_at: string;
 };
 
 export type DispensingOrder = DispensingOrderPayload & {
@@ -232,6 +243,10 @@ export type DispensingOrder = DispensingOrderPayload & {
   has_vendor_document: boolean;
   sent_by: number | null;
   sent_at: string | null;
+  delivered_by?: number | null;
+  delivered_at?: string | null;
+  is_delayed?: boolean;
+  events?: OrderStatusEvent[];
   created_by: number | null;
   updated_by: number | null;
   created_at: string;
@@ -281,6 +296,14 @@ export type VisitBillingContext = {
 
 export type FollowUpInterval = "one_week" | "fifteen_days" | "one_month" | "custom";
 export type FollowUpStatus = "pending" | "completed" | "cancelled";
+export type FollowUpType =
+  | "contact_lens"
+  | "progressive_adaptation"
+  | "pediatric_review"
+  | "referral_follow_up"
+  | "dry_eye_review"
+  | "custom";
+export type FollowUpReminderState = "not_scheduled" | "scheduled" | "sent" | "failed";
 
 export type ContactLensEyeAssessment = {
   k_reading?: string | null;
@@ -331,6 +354,7 @@ export type ContactLensOrderPayload = {
   vendor_id: number | null;
   lens_details: ContactLensDetails;
   order_notes: string | null;
+  expected_delivery_date?: string | null;
 };
 
 export type ContactLensOrder = ContactLensOrderPayload & {
@@ -341,6 +365,10 @@ export type ContactLensOrder = ContactLensOrderPayload & {
   order_reference: string;
   status: DispensingOrderStatus;
   workup_snapshot: Record<string, unknown>;
+  delivered_by?: number | null;
+  delivered_at?: string | null;
+  is_delayed?: boolean;
+  events?: OrderStatusEvent[];
   created_by: number | null;
   updated_by: number | null;
   created_at: string;
@@ -351,18 +379,35 @@ export type ContactLensFollowUp = {
   id: number;
   customer_id: number;
   visit_id: number;
-  contact_lens_order_id: number;
-  task_type: string;
-  interval: FollowUpInterval;
+  contact_lens_order_id: number | null;
+  task_type: FollowUpType;
+  interval: FollowUpInterval | null;
   due_date: string;
   status: FollowUpStatus;
+  assigned_staff_id: number | null;
+  reminder_state: FollowUpReminderState;
   notes: string | null;
+  completion_notes: string | null;
   completed_by: number | null;
   completed_at: string | null;
   created_by: number | null;
   updated_by: number | null;
   created_at: string;
   updated_at: string;
+};
+
+export type FollowUpCreatePayload = {
+  task_type: FollowUpType;
+  due_date: string;
+  assigned_staff_id?: number | null;
+  reminder_state: FollowUpReminderState;
+  notes?: string | null;
+};
+
+export type FollowUpListResponse = {
+  visit_id: number;
+  items: ContactLensFollowUp[];
+  total: number;
 };
 
 export type ContactLensContext = {

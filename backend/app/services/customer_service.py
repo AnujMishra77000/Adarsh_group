@@ -7,19 +7,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
+from app.models.contact_lens_order import ContactLensOrder
 from app.models.customer import Customer
+from app.models.dispensing_order import DispensingOrder
+from app.models.enums import PrescriptionVersionStatus
 from app.models.user import User
+from app.models.visit_prescription import VisitPrescription
 from app.repositories.customer_repository import CustomerRepository
 from app.schemas.customer import (
     CustomerBillSummary,
     CustomerContactLensOrderSummary,
     CustomerCreate,
     CustomerDetailRead,
+    CustomerDispensingOrderSummary,
     CustomerListResponse,
     CustomerFollowUpTaskSummary,
     CustomerPrescriptionSummary,
     CustomerRead,
     CustomerReferralSummary,
+    CustomerTimelineItem,
     CustomerUpdate,
     CustomerVisitSummary,
 )
@@ -139,9 +145,24 @@ class CustomerService:
             reverse=True,
         )
         contact_lens_orders = sorted(
-            list(customer.contact_lens_orders),
+            self.db.query(ContactLensOrder)
+            .filter(ContactLensOrder.customer_id == customer.id, ContactLensOrder.shop_key == self.shop_key)
+            .all(),
             key=lambda item: item.created_at,
             reverse=True,
+        )
+        dispensing_orders = sorted(
+            self.db.query(DispensingOrder)
+            .filter(DispensingOrder.customer_id == customer.id, DispensingOrder.shop_key == self.shop_key)
+            .all(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
+        visit_prescriptions = (
+            self.db.query(VisitPrescription)
+            .filter(VisitPrescription.customer_id == customer.id, VisitPrescription.shop_key == self.shop_key)
+            .order_by(VisitPrescription.created_at.desc())
+            .all()
         )
         follow_up_tasks = sorted(
             list(customer.follow_up_tasks),
@@ -154,7 +175,21 @@ class CustomerService:
             reverse=True,
         )
         referrals: list[CustomerReferralSummary] = []
+        timeline: list[CustomerTimelineItem] = []
         for visit in visits:
+            timeline.append(
+                CustomerTimelineItem(
+                    event="visit",
+                    occurred_at=visit.visit_date,
+                    label=f"Visit: {visit.reason_for_visit}",
+                    visit_id=visit.id,
+                    entity_type="visit",
+                    entity_id=visit.id,
+                    status=visit.status.value,
+                    user_id=visit.created_by,
+                    notes=visit.visit_notes,
+                )
+            )
             for section in visit.exam_sections:
                 if section.section_key != "referral":
                     continue
@@ -171,6 +206,153 @@ class CustomerService:
                         follow_up=self._referral_value(payload, "follow_up"),
                     )
                 )
+                timeline.append(
+                    CustomerTimelineItem(
+                        event="referral",
+                        occurred_at=section.updated_at,
+                        label="Referral recorded",
+                        visit_id=visit.id,
+                        entity_type="visit_exam_section",
+                        entity_id=section.id,
+                        status=self._referral_value(payload, "referral_status"),
+                        user_id=section.updated_by,
+                        notes=self._referral_value(payload, "notes"),
+                    )
+                )
+
+        for prescription in visit_prescriptions:
+            if prescription.status not in {
+                PrescriptionVersionStatus.FINALIZED,
+                PrescriptionVersionStatus.SUPERSEDED,
+            } or prescription.finalized_at is None:
+                continue
+            amended = prescription.amends_prescription_id is not None
+            timeline.append(
+                CustomerTimelineItem(
+                    event="prescription_amended" if amended else "prescription_finalized",
+                    occurred_at=prescription.finalized_at,
+                    label=(
+                        f"Prescription amendment v{prescription.version_number} finalized"
+                        if amended
+                        else f"Prescription v{prescription.version_number} finalized"
+                    ),
+                    visit_id=prescription.visit_id,
+                    entity_type="visit_prescription",
+                    entity_id=prescription.id,
+                    status=prescription.status.value,
+                    user_id=prescription.finalized_by,
+                    notes=prescription.patient_instructions,
+                )
+            )
+            if prescription.pdf_file_path:
+                timeline.append(
+                    CustomerTimelineItem(
+                        event="prescription_card_generated",
+                        occurred_at=prescription.updated_at,
+                        label=f"Prescription card v{prescription.version_number} generated",
+                        visit_id=prescription.visit_id,
+                        entity_type="visit_prescription",
+                        entity_id=prescription.id,
+                        status=prescription.status.value,
+                        user_id=prescription.updated_by,
+                        notes=None,
+                    )
+                )
+
+        for order in [*dispensing_orders, *contact_lens_orders]:
+            order_type = "dispensing_order" if isinstance(order, DispensingOrder) else "contact_lens_order"
+            fallback_event = "spectacle_ordered" if isinstance(order, DispensingOrder) else "contact_lens_ordered"
+            if not order.status_events:
+                timeline.append(
+                    CustomerTimelineItem(
+                        event=fallback_event,
+                        occurred_at=order.created_at,
+                        label=f"{order.order_reference}: {fallback_event.replace('_', ' ')}",
+                        visit_id=order.visit_id,
+                        entity_type=order_type,
+                        entity_id=order.id,
+                        status=order.status.value,
+                        user_id=order.created_by,
+                        notes=None,
+                    )
+                )
+            for event in order.status_events:
+                timeline.append(
+                    CustomerTimelineItem(
+                        event=event.event,
+                        occurred_at=event.occurred_at,
+                        label=f"{order.order_reference}: {event.event.replace('_', ' ')}",
+                        visit_id=order.visit_id,
+                        entity_type=order_type,
+                        entity_id=order.id,
+                        status=event.status,
+                        user_id=event.user_id,
+                        notes=event.notes,
+                        previous_status=event.previous_status,
+                    )
+                )
+
+        for bill in bills:
+            has_invoice = bool(bill.pdf_file_path or bill.pdf_url)
+            timeline.append(
+                CustomerTimelineItem(
+                    event="invoice_generated" if has_invoice else "invoice_created",
+                    occurred_at=bill.updated_at if has_invoice else bill.created_at,
+                    label=f"Invoice {bill.bill_number} {'generated' if has_invoice else 'created'}",
+                    visit_id=bill.visit_id,
+                    entity_type="bill",
+                    entity_id=bill.id,
+                    status=bill.payment_status.value,
+                    user_id=bill.updated_by if has_invoice else bill.created_by,
+                    notes=bill.notes,
+                )
+            )
+            for payment in bill.payments:
+                timeline.append(
+                    CustomerTimelineItem(
+                        event="payment_recorded",
+                        occurred_at=payment.created_at,
+                        label=f"Payment recorded for {bill.bill_number}",
+                        visit_id=bill.visit_id,
+                        entity_type="payment",
+                        entity_id=payment.id,
+                        status=payment.mode.value,
+                        user_id=payment.created_by,
+                        notes=payment.reference_no,
+                    )
+                )
+
+        for task in follow_up_tasks:
+            task_type = task.task_type.value if hasattr(task.task_type, "value") else str(task.task_type)
+            timeline.append(
+                CustomerTimelineItem(
+                    event="follow_up_scheduled",
+                    occurred_at=task.created_at,
+                    label=f"{task_type.replace('_', ' ').title()} follow-up scheduled",
+                    visit_id=task.visit_id,
+                    entity_type="follow_up",
+                    entity_id=task.id,
+                    status=task.status.value,
+                    user_id=task.created_by,
+                    notes=task.notes,
+                )
+            )
+            if task.completed_at:
+                timeline.append(
+                    CustomerTimelineItem(
+                        event="follow_up_completed",
+                        occurred_at=task.completed_at,
+                        label=f"{task_type.replace('_', ' ').title()} follow-up completed",
+                        visit_id=task.visit_id,
+                        entity_type="follow_up",
+                        entity_id=task.id,
+                        status=task.status.value,
+                        user_id=task.completed_by,
+                        notes=task.completion_notes,
+                        previous_status="pending",
+                    )
+                )
+        timeline.sort(key=lambda item: item.occurred_at, reverse=True)
 
         return CustomerDetailRead(
             **CustomerRead.model_validate(customer).model_dump(),
@@ -207,6 +389,19 @@ class CustomerService:
                 )
                 for bill in bills
             ],
+            dispensing_orders=[
+                CustomerDispensingOrderSummary(
+                    id=order.id,
+                    visit_id=order.visit_id,
+                    order_reference=order.order_reference,
+                    status=order.status,
+                    vendor_id=order.vendor_id,
+                    delivered_by=order.delivered_by,
+                    delivered_at=order.delivered_at,
+                    created_at=order.created_at,
+                )
+                for order in dispensing_orders
+            ],
             contact_lens_orders=[
                 CustomerContactLensOrderSummary(
                     id=order.id,
@@ -214,6 +409,8 @@ class CustomerService:
                     order_reference=order.order_reference,
                     status=order.status,
                     vendor_id=order.vendor_id,
+                    delivered_by=order.delivered_by,
+                    delivered_at=order.delivered_at,
                     created_at=order.created_at,
                 )
                 for order in contact_lens_orders
@@ -227,10 +424,14 @@ class CustomerService:
                     due_date=task.due_date,
                     status=task.status,
                     notes=task.notes,
+                    assigned_staff_id=task.assigned_staff_id,
+                    reminder_state=task.reminder_state.value,
+                    completion_notes=task.completion_notes,
                     completed_at=task.completed_at,
                 )
                 for task in follow_up_tasks
             ],
+            timeline=timeline,
         )
 
     def update_customer(self, customer_pk: int, payload: CustomerUpdate, actor: User) -> CustomerRead:

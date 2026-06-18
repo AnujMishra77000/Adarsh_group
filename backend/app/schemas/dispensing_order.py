@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -61,10 +61,31 @@ class DispensingOrderDraftUpdate(_OptionalTextModel):
     lens: LensSpecification = Field(default_factory=LensSpecification)
     vendor_id: int | None = Field(default=None, gt=0)
     manufacturing_instructions: str | None = Field(default=None, max_length=4000)
+    expected_delivery_date: date | None = None
 
 
 class DispensingOrderStatusUpdate(BaseModel):
     status: DispensingOrderStatus
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def normalize_notes(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+class OrderStatusEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    event: str
+    previous_status: DispensingOrderStatus | None
+    status: DispensingOrderStatus
+    user_id: int | None
+    notes: str | None
+    occurred_at: datetime
 
 
 class DispensingOrderSendVendorRequest(_OptionalTextModel):
@@ -90,6 +111,11 @@ class DispensingOrderRead(BaseModel):
     has_vendor_document: bool
     sent_by: int | None
     sent_at: datetime | None
+    expected_delivery_date: date | None
+    delivered_by: int | None
+    delivered_at: datetime | None
+    is_delayed: bool
+    events: list[OrderStatusEventRead]
     created_by: int | None
     updated_by: int | None
     created_at: datetime
@@ -113,4 +139,3 @@ class DispensingOrderSendVendorResponse(BaseModel):
     message: str
     whatsapp_log_id: int | None = None
     provider_message_id: str | None = None
-

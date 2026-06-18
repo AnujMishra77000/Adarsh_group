@@ -138,18 +138,47 @@ class CustomerContactLensOrderSummary(BaseModel):
     order_reference: str
     status: DispensingOrderStatus
     vendor_id: int | None
+    delivered_by: int | None
+    delivered_at: datetime | None
+    created_at: datetime
+
+
+class CustomerDispensingOrderSummary(BaseModel):
+    id: int
+    visit_id: int
+    order_reference: str
+    status: DispensingOrderStatus
+    vendor_id: int | None
+    delivered_by: int | None
+    delivered_at: datetime | None
     created_at: datetime
 
 
 class CustomerFollowUpTaskSummary(BaseModel):
     id: int
     visit_id: int
-    contact_lens_order_id: int
+    contact_lens_order_id: int | None
     task_type: str
     due_date: date
     status: FollowUpStatus
     notes: str | None
+    assigned_staff_id: int | None
+    reminder_state: str
+    completion_notes: str | None
     completed_at: datetime | None
+
+
+class CustomerTimelineItem(BaseModel):
+    event: str
+    occurred_at: datetime
+    label: str
+    visit_id: int | None
+    entity_type: str
+    entity_id: int
+    status: str | None
+    user_id: int | None
+    notes: str | None
+    previous_status: str | None = None
 
 
 class CustomerDetailRead(CustomerRead):
@@ -157,8 +186,10 @@ class CustomerDetailRead(CustomerRead):
     referrals: list[CustomerReferralSummary]
     prescriptions: list[CustomerPrescriptionSummary]
     bills: list[CustomerBillSummary]
+    dispensing_orders: list[CustomerDispensingOrderSummary]
     contact_lens_orders: list[CustomerContactLensOrderSummary]
     follow_up_tasks: list[CustomerFollowUpTaskSummary]
+    timeline: list[CustomerTimelineItem]
 
 
 class CustomerListResponse(BaseModel):

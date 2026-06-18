@@ -12,7 +12,9 @@ import type {
   ContactLensOrderPayload,
   ContactLensWorkup,
   ContactLensWorkupPayload,
+  FollowUpCreatePayload,
   FollowUpInterval,
+  FollowUpListResponse,
   FollowUpStatus,
   Visit,
   VisitBillingContext,
@@ -139,9 +141,10 @@ export async function relinkDispensingOrderPrescription(visitId: number): Promis
 
 export async function changeDispensingOrderStatus(
   visitId: number,
-  status: DispensingOrderStatus
+  status: DispensingOrderStatus,
+  notes?: string | null
 ): Promise<DispensingOrder> {
-  const response = await apiClient.post<DispensingOrder>(`/visits/${visitId}/dispensing-order/status`, { status });
+  const response = await apiClient.post<DispensingOrder>(`/visits/${visitId}/dispensing-order/status`, { status, notes });
   return response.data;
 }
 
@@ -213,9 +216,10 @@ export async function saveContactLensOrder(
 
 export async function changeContactLensOrderStatus(
   visitId: number,
-  status: DispensingOrderStatus
+  status: DispensingOrderStatus,
+  notes?: string | null
 ): Promise<ContactLensOrder> {
-  const response = await apiClient.post<ContactLensOrder>(`/visits/${visitId}/contact-lens/order/status`, { status });
+  const response = await apiClient.post<ContactLensOrder>(`/visits/${visitId}/contact-lens/order/status`, { status, notes });
   return response.data;
 }
 
@@ -232,5 +236,30 @@ export async function changeContactLensFollowUpStatus(
   status: FollowUpStatus
 ): Promise<ContactLensFollowUp> {
   const response = await apiClient.post<ContactLensFollowUp>(`/visits/${visitId}/contact-lens/follow-up/status`, { status });
+  return response.data;
+}
+
+export async function listVisitFollowUps(visitId: number): Promise<FollowUpListResponse> {
+  const response = await apiClient.get<FollowUpListResponse>(`/visits/${visitId}/follow-ups`);
+  return response.data;
+}
+
+export async function createVisitFollowUp(
+  visitId: number,
+  payload: FollowUpCreatePayload
+): Promise<ContactLensFollowUp> {
+  const response = await apiClient.post<ContactLensFollowUp>(`/visits/${visitId}/follow-ups`, payload);
+  return response.data;
+}
+
+export async function changeVisitFollowUpStatus(
+  visitId: number,
+  taskId: number,
+  payload: { status: FollowUpStatus; completion_notes?: string | null }
+): Promise<ContactLensFollowUp> {
+  const response = await apiClient.post<ContactLensFollowUp>(
+    `/visits/${visitId}/follow-ups/${taskId}/status`,
+    payload
+  );
   return response.data;
 }

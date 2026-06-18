@@ -19,6 +19,9 @@ from app.schemas.contact_lens import (
     ContactLensOrderUpdate,
     ContactLensWorkupRead,
     ContactLensWorkupUpdate,
+    FollowUpCreate,
+    FollowUpListResponse,
+    FollowUpStatusUpdate,
 )
 from app.schemas.dispensing_order import (
     DispensingOrderContext,
@@ -129,6 +132,44 @@ def change_contact_lens_follow_up_status(
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
 ) -> ContactLensFollowUpRead:
     return ContactLensService(db, shop_key).change_follow_up_status(visit_id, payload.status, current_user)
+
+
+@router.get("/{visit_id}/follow-ups", response_model=FollowUpListResponse)
+def list_visit_follow_ups(
+    visit_id: int,
+    db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+) -> FollowUpListResponse:
+    return ContactLensService(db, shop_key).list_follow_ups(visit_id, current_user)
+
+
+@router.post("/{visit_id}/follow-ups", response_model=ContactLensFollowUpRead, status_code=status.HTTP_201_CREATED)
+def create_visit_follow_up(
+    visit_id: int,
+    payload: FollowUpCreate,
+    db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+) -> ContactLensFollowUpRead:
+    return ContactLensService(db, shop_key).create_follow_up(visit_id, payload, current_user)
+
+
+@router.post("/{visit_id}/follow-ups/{task_id}/status", response_model=ContactLensFollowUpRead)
+def change_visit_follow_up_status(
+    visit_id: int,
+    task_id: int,
+    payload: FollowUpStatusUpdate,
+    db: Session = Depends(get_db),
+    shop_key: str = Depends(get_shop_key),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.STAFF)),
+) -> ContactLensFollowUpRead:
+    return ContactLensService(db, shop_key).change_follow_up_status_by_id(
+        visit_id,
+        task_id,
+        payload,
+        current_user,
+    )
 
 
 @router.get("/{visit_id}/billing", response_model=VisitBillingContext)

@@ -13,10 +13,6 @@ node_modules/
 dist/
 .vite/
 *.tsbuildinfo
-frontend/vite.config.js
-frontend/vite.config.d.ts
-frontend/vitest.config.js
-frontend/vitest.config.d.ts
 crm/vite.config.js
 crm/vite.config.d.ts
 crm/vitest.config.js

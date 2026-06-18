@@ -72,7 +72,34 @@ describe("CustomerRecordsPage contact-lens history", () => {
         status: "pending",
         notes: "Check comfort",
         completed_at: null
-      }]
+      }],
+      dispensing_orders: [],
+      timeline: [
+        {
+          event: "visit",
+          occurred_at: "2026-06-18T10:00:00Z",
+          label: "Visit: Contact lens fitting",
+          visit_id: 12,
+          entity_type: "visit",
+          entity_id: 12,
+          status: "in_progress",
+          user_id: 2,
+          notes: null,
+          previous_status: null
+        },
+        {
+          event: "follow_up_scheduled",
+          occurred_at: "2026-06-18T11:15:00Z",
+          label: "Contact lens follow-up scheduled",
+          visit_id: 12,
+          entity_type: "follow_up",
+          entity_id: 61,
+          status: "pending",
+          user_id: 2,
+          notes: "Check comfort",
+          previous_status: null
+        }
+      ]
     } as never);
 
     renderWithProviders(<CustomerRecordsPage />, { route: "/crm/customers/records" });
@@ -81,7 +108,9 @@ describe("CustomerRecordsPage contact-lens history", () => {
     expect(screen.getByText("CL-20260618-ABCD1234")).toBeInTheDocument();
     expect(screen.getByText(/ready for vendor/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /follow-up tasks/i })).toBeInTheDocument();
-    expect(screen.getByText(/check comfort/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/check comfort/i)).toHaveLength(2);
+    expect(screen.getByRole("heading", { name: /patient timeline/i })).toBeInTheDocument();
+    expect(screen.getByText(/contact lens follow-up scheduled/i)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /continue visit/i }).length).toBeGreaterThan(0);
   });
 });

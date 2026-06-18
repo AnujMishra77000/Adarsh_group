@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   activateContactLensWorkup,
+  changeVisitFollowUpStatus,
   completeVisit,
+  createVisitFollowUp,
   createVisitPrescriptionAmendment,
   finalizeVisitPrescription,
   generateVisitPrescriptionPdf,
@@ -16,6 +18,7 @@ import {
   getVisitPrescriptionSummary,
   listVisitExamSectionHistory,
   listVisitExamSections,
+  listVisitFollowUps,
   saveVisitExamSection,
   saveDispensingOrder,
   saveContactLensWorkup,
@@ -37,6 +40,9 @@ vi.mock("@/features/visits/api", () => ({
   changeContactLensOrderStatus: vi.fn(),
   scheduleContactLensFollowUp: vi.fn(),
   changeContactLensFollowUpStatus: vi.fn(),
+  listVisitFollowUps: vi.fn(),
+  createVisitFollowUp: vi.fn(),
+  changeVisitFollowUpStatus: vi.fn(),
   getVisit: vi.fn(),
   listVisitExamSectionHistory: vi.fn(),
   listVisitExamSections: vi.fn(),
@@ -87,6 +93,9 @@ const mockedFinalizeVisitPrescription = vi.mocked(finalizeVisitPrescription);
 const mockedCreateVisitPrescriptionAmendment = vi.mocked(createVisitPrescriptionAmendment);
 const mockedGenerateVisitPrescriptionPdf = vi.mocked(generateVisitPrescriptionPdf);
 const mockedCompleteVisit = vi.mocked(completeVisit);
+const mockedListVisitFollowUps = vi.mocked(listVisitFollowUps);
+const mockedCreateVisitFollowUp = vi.mocked(createVisitFollowUp);
+const mockedChangeVisitFollowUpStatus = vi.mocked(changeVisitFollowUpStatus);
 const mockedGetDispensingOrderContext = vi.mocked(getDispensingOrderContext);
 const mockedSaveDispensingOrder = vi.mocked(saveDispensingOrder);
 const mockedRelinkDispensingOrderPrescription = vi.mocked(relinkDispensingOrderPrescription);
@@ -833,5 +842,57 @@ describe("VisitWorkspacePage examination workspace", () => {
         dispensing_order_id: 41
       })
     );
+  });
+
+  it("creates typed operational follow-ups from the completion section", async () => {
+    mockedGetVisit.mockResolvedValue(visit);
+    mockSections();
+    mockHistory();
+    mockedListVisitFollowUps.mockResolvedValue({ visit_id: 12, items: [], total: 0 });
+    mockedCreateVisitFollowUp.mockResolvedValue({
+      id: 91,
+      customer_id: 4,
+      visit_id: 12,
+      contact_lens_order_id: null,
+      task_type: "pediatric_review",
+      interval: null,
+      due_date: "2026-07-18",
+      status: "pending",
+      assigned_staff_id: 2,
+      reminder_state: "scheduled",
+      notes: "Review cycloplegic response",
+      completion_notes: null,
+      completed_by: null,
+      completed_at: null,
+      created_by: 2,
+      updated_by: 2,
+      created_at: "2026-06-18T12:00:00Z",
+      updated_at: "2026-06-18T12:00:00Z"
+    });
+
+    const { user } = renderWithProviders(
+      <Routes>
+        <Route path={`${CRM_PATHS.visitWorkspace}/:visitId`} element={<VisitWorkspacePage />} />
+      </Routes>,
+      { route: `${CRM_PATHS.visitWorkspace}/12` }
+    );
+
+    await user.click(await screen.findByRole("button", { name: /completion and follow-up/i }));
+    expect(await screen.findByRole("heading", { name: /operational follow-ups/i })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/follow-up type/i), "pediatric_review");
+    await user.type(screen.getByLabelText(/due date/i), "2026-07-18");
+    await user.type(screen.getByLabelText(/assigned staff id/i), "2");
+    await user.selectOptions(screen.getByLabelText(/reminder state/i), "scheduled");
+    await user.type(screen.getByLabelText(/follow-up notes/i), "Review cycloplegic response");
+    await user.click(screen.getByRole("button", { name: /schedule follow-up/i }));
+
+    await waitFor(() => expect(mockedCreateVisitFollowUp).toHaveBeenCalledWith(12, {
+      task_type: "pediatric_review",
+      due_date: "2026-07-18",
+      assigned_staff_id: 2,
+      reminder_state: "scheduled",
+      notes: "Review cycloplegic response"
+    }));
+    expect(mockedChangeVisitFollowUpStatus).not.toHaveBeenCalled();
   });
 });

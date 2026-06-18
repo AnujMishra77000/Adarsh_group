@@ -82,6 +82,22 @@ class FollowUpInterval(str, Enum):
     CUSTOM = "custom"
 
 
+class FollowUpType(str, Enum):
+    CONTACT_LENS = "contact_lens"
+    PROGRESSIVE_ADAPTATION = "progressive_adaptation"
+    PEDIATRIC_REVIEW = "pediatric_review"
+    REFERRAL_FOLLOW_UP = "referral_follow_up"
+    DRY_EYE_REVIEW = "dry_eye_review"
+    CUSTOM = "custom"
+
+
+class FollowUpReminderState(str, Enum):
+    NOT_SCHEDULED = "not_scheduled"
+    SCHEDULED = "scheduled"
+    SENT = "sent"
+    FAILED = "failed"
+
+
 class BillItemType(str, Enum):
     FRAME = "frame"
     LENS = "lens"

@@ -5,7 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.enums import DispensingOrderStatus, ExamSectionState, FollowUpInterval, FollowUpStatus
+from app.models.enums import (
+    DispensingOrderStatus,
+    ExamSectionState,
+    FollowUpInterval,
+    FollowUpReminderState,
+    FollowUpStatus,
+    FollowUpType,
+)
+from app.schemas.dispensing_order import OrderStatusEventRead
 
 
 def _blank_to_none(value: object) -> object:
@@ -81,6 +89,7 @@ class ContactLensOrderUpdate(BaseModel):
     vendor_id: int | None = Field(default=None, ge=1)
     lens_details: ContactLensDetails = Field(default_factory=ContactLensDetails)
     order_notes: str | None = Field(default=None, max_length=4000)
+    expected_delivery_date: date | None = None
 
     @field_validator("order_notes", mode="before")
     @classmethod
@@ -90,6 +99,7 @@ class ContactLensOrderUpdate(BaseModel):
 
 class ContactLensOrderStatusUpdate(BaseModel):
     status: DispensingOrderStatus
+    notes: str | None = Field(default=None, max_length=4000)
 
 
 class ContactLensOrderRead(BaseModel):
@@ -105,6 +115,11 @@ class ContactLensOrderRead(BaseModel):
     workup_snapshot: dict
     lens_details: ContactLensDetails
     order_notes: str | None
+    expected_delivery_date: date | None
+    delivered_by: int | None
+    delivered_at: datetime | None
+    is_delayed: bool
+    events: list[OrderStatusEventRead]
     created_by: int | None
     updated_by: int | None
     created_at: datetime
@@ -130,6 +145,30 @@ class ContactLensFollowUpSchedule(BaseModel):
 
 class ContactLensFollowUpStatusUpdate(BaseModel):
     status: FollowUpStatus
+    completion_notes: str | None = Field(default=None, max_length=4000)
+
+
+class FollowUpCreate(BaseModel):
+    task_type: FollowUpType
+    due_date: date
+    assigned_staff_id: int | None = Field(default=None, gt=0)
+    reminder_state: FollowUpReminderState = FollowUpReminderState.NOT_SCHEDULED
+    notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def normalize_create_notes(cls, value: object) -> object:
+        return _blank_to_none(value)
+
+
+class FollowUpStatusUpdate(BaseModel):
+    status: FollowUpStatus
+    completion_notes: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("completion_notes", mode="before")
+    @classmethod
+    def normalize_completion_notes(cls, value: object) -> object:
+        return _blank_to_none(value)
 
 
 class ContactLensFollowUpRead(BaseModel):
@@ -138,18 +177,27 @@ class ContactLensFollowUpRead(BaseModel):
     id: int
     customer_id: int
     visit_id: int
-    contact_lens_order_id: int
-    task_type: str
-    interval: FollowUpInterval
+    contact_lens_order_id: int | None
+    task_type: FollowUpType
+    interval: FollowUpInterval | None
     due_date: date
     status: FollowUpStatus
+    assigned_staff_id: int | None
+    reminder_state: FollowUpReminderState
     notes: str | None
+    completion_notes: str | None
     completed_by: int | None
     completed_at: datetime | None
     created_by: int | None
     updated_by: int | None
     created_at: datetime
     updated_at: datetime
+
+
+class FollowUpListResponse(BaseModel):
+    visit_id: int
+    items: list[ContactLensFollowUpRead]
+    total: int
 
 
 class ContactLensContext(BaseModel):

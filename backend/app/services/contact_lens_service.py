@@ -8,8 +8,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import AppException
+from app.db.shop_scope import assign_shop_scope
 from app.models.contact_lens_order import ContactLensOrder, FollowUpTask
-from app.models.enums import DispensingOrderStatus, FollowUpInterval, FollowUpStatus, VisitStatus
+from app.models.dispensing_order import DispensingOrder, OrderStatusEvent
+from app.models.enums import (
+    DispensingOrderStatus,
+    FollowUpInterval,
+    FollowUpReminderState,
+    FollowUpStatus,
+    FollowUpType,
+    VisitStatus,
+)
 from app.models.user import User
 from app.models.visit import Visit
 from app.repositories.contact_lens_repository import ContactLensRepository
@@ -25,6 +34,9 @@ from app.schemas.contact_lens import (
     ContactLensOrderUpdate,
     ContactLensWorkupRead,
     ContactLensWorkupUpdate,
+    FollowUpCreate,
+    FollowUpListResponse,
+    FollowUpStatusUpdate,
 )
 from app.schemas.visit_exam_section import VisitExamSectionUpdate
 from app.services.audit_service import AuditService
@@ -32,6 +44,15 @@ from app.services.visit_exam_section_service import VisitExamSectionService
 
 
 class ContactLensService:
+    STATUS_EVENTS = {
+        DispensingOrderStatus.READY_FOR_VENDOR: "ready_for_vendor",
+        DispensingOrderStatus.SENT_TO_VENDOR: "vendor_order_sent",
+        DispensingOrderStatus.IN_PRODUCTION: "order_in_production",
+        DispensingOrderStatus.READY_FOR_DELIVERY: "ready_for_delivery",
+        DispensingOrderStatus.DELIVERED: "delivered",
+        DispensingOrderStatus.CANCELLED: "cancelled",
+        DispensingOrderStatus.DRAFT: "returned_to_draft",
+    }
     STATUS_TRANSITIONS = {
         DispensingOrderStatus.DRAFT: {DispensingOrderStatus.READY_FOR_VENDOR, DispensingOrderStatus.CANCELLED},
         DispensingOrderStatus.READY_FOR_VENDOR: {
@@ -81,6 +102,11 @@ class ContactLensService:
 
     @staticmethod
     def _serialize_order(order: ContactLensOrder) -> ContactLensOrderRead:
+        is_delayed = bool(
+            order.expected_delivery_date
+            and order.expected_delivery_date < date.today()
+            and order.status not in {DispensingOrderStatus.DELIVERED, DispensingOrderStatus.CANCELLED}
+        )
         return ContactLensOrderRead(
             id=order.id,
             visit_id=order.visit_id,
@@ -92,11 +118,39 @@ class ContactLensService:
             workup_snapshot=order.workup_snapshot or {},
             lens_details=order.lens_data or {},
             order_notes=order.order_notes,
+            expected_delivery_date=order.expected_delivery_date,
+            delivered_by=order.delivered_by,
+            delivered_at=order.delivered_at,
+            is_delayed=is_delayed,
+            events=list(order.status_events),
             created_by=order.created_by,
             updated_by=order.updated_by,
             created_at=order.created_at,
             updated_at=order.updated_at,
         )
+
+    def _record_order_event(
+        self,
+        order: ContactLensOrder,
+        *,
+        event: str,
+        status: DispensingOrderStatus,
+        actor: User,
+        previous_status: DispensingOrderStatus | None = None,
+        notes: str | None = None,
+    ) -> None:
+        item = OrderStatusEvent(
+            shop_key=self.shop_key,
+            contact_lens_order_id=order.id,
+            event=event,
+            previous_status=previous_status.value if previous_status else None,
+            status=status.value,
+            user_id=actor.id,
+            notes=notes,
+        )
+        assign_shop_scope(item, self.db, self.shop_key)
+        self.db.add(item)
+        self.db.flush()
 
     @staticmethod
     def _serialize_follow_up(task: FollowUpTask) -> ContactLensFollowUpRead:
@@ -142,7 +196,7 @@ class ContactLensService:
         visit = self._ensure_visit(visit_id, actor)
         section = self.section_repo.get_for_visit(visit_id, "contact_lens", shop_key=self.shop_key)
         order = self.repo.get_order_by_visit(visit_id, self.shop_key)
-        follow_up = self.repo.get_follow_up_by_visit(visit_id, self.shop_key)
+        follow_up = self.repo.get_follow_up_by_visit(visit_id, self.shop_key, FollowUpType.CONTACT_LENS.value)
         workup = None
         if section:
             workup = ContactLensWorkupRead(
@@ -223,6 +277,7 @@ class ContactLensService:
                 workup_snapshot=deepcopy(section.payload or {}),
                 lens_data=lens_data,
                 order_notes=payload.order_notes,
+                expected_delivery_date=payload.expected_delivery_date,
                 created_by=actor.id,
                 updated_by=actor.id,
             )
@@ -233,13 +288,22 @@ class ContactLensService:
             order.vendor_id = vendor_id
             order.lens_data = lens_data
             order.order_notes = payload.order_notes
+            order.expected_delivery_date = payload.expected_delivery_date
             order.updated_by = actor.id
             action = "contact_lens_order.update"
         visit.contact_lens_workup_requested = True
         visit.updated_by = actor.id
         try:
-            if order.id is None:
+            is_new = order.id is None
+            if is_new:
                 self.repo.create_order(order)
+                self._record_order_event(
+                    order,
+                    event="contact_lens_ordered",
+                    status=DispensingOrderStatus.DRAFT,
+                    actor=actor,
+                    notes=payload.order_notes,
+                )
             else:
                 self.repo.save_order(order)
             self.visit_repo.save(visit)
@@ -262,7 +326,7 @@ class ContactLensService:
         payload: ContactLensOrderStatusUpdate,
         actor: User,
     ) -> ContactLensOrderRead:
-        self._ensure_visit(visit_id, actor, editable=True)
+        self._ensure_visit(visit_id, actor)
         order = self._get_order(visit_id)
         if payload.status == order.status:
             return self._serialize_order(order)
@@ -275,7 +339,18 @@ class ContactLensService:
         previous = order.status
         order.status = payload.status
         order.updated_by = actor.id
+        if payload.status == DispensingOrderStatus.DELIVERED:
+            order.delivered_by = actor.id
+            order.delivered_at = datetime.now(UTC)
         self.repo.save_order(order)
+        self._record_order_event(
+            order,
+            event=self.STATUS_EVENTS[payload.status],
+            previous_status=previous,
+            status=payload.status,
+            actor=actor,
+            notes=payload.notes,
+        )
         self.audit_service.log(
             actor_user_id=actor.id,
             action="contact_lens_order.status_change",
@@ -307,9 +382,11 @@ class ContactLensService:
         payload: ContactLensFollowUpSchedule,
         actor: User,
     ) -> ContactLensFollowUpRead:
-        visit = self._ensure_visit(visit_id, actor, editable=True)
+        visit = self._ensure_visit(visit_id, actor)
+        if visit.status == VisitStatus.CANCELLED:
+            raise AppException(status_code=409, code="visit_cancelled", message="Cancelled visits cannot receive follow-ups")
         order = self._get_order(visit_id)
-        task = self.repo.get_follow_up_by_visit(visit_id, self.shop_key)
+        task = self.repo.get_follow_up_by_visit(visit_id, self.shop_key, FollowUpType.CONTACT_LENS.value)
         if task and task.status != FollowUpStatus.PENDING:
             raise AppException(
                 status_code=409,
@@ -323,11 +400,12 @@ class ContactLensService:
                 customer_id=visit.customer_id,
                 visit_id=visit.id,
                 contact_lens_order_id=order.id,
-                task_type="contact_lens_review",
+                task_type=FollowUpType.CONTACT_LENS.value,
                 interval=payload.interval.value,
                 due_date=due_date,
                 status=FollowUpStatus.PENDING,
                 notes=payload.notes,
+                reminder_state=FollowUpReminderState.NOT_SCHEDULED,
                 created_by=actor.id,
                 updated_by=actor.id,
             )
@@ -348,11 +426,13 @@ class ContactLensService:
             new_values={"visit_id": visit.id, "due_date": task.due_date.isoformat(), "status": task.status.value},
         )
         self.db.commit()
-        return self._serialize_follow_up(self.repo.get_follow_up_by_visit(visit_id, self.shop_key))
+        return self._serialize_follow_up(
+            self.repo.get_follow_up_by_visit(visit_id, self.shop_key, FollowUpType.CONTACT_LENS.value)
+        )
 
     def change_follow_up_status(self, visit_id: int, status: FollowUpStatus, actor: User) -> ContactLensFollowUpRead:
-        self._ensure_visit(visit_id, actor, editable=True)
-        task = self.repo.get_follow_up_by_visit(visit_id, self.shop_key)
+        self._ensure_visit(visit_id, actor)
+        task = self.repo.get_follow_up_by_visit(visit_id, self.shop_key, FollowUpType.CONTACT_LENS.value)
         if not task:
             raise AppException(status_code=404, code="contact_lens_follow_up_not_found", message="Follow-up not found")
         if status == task.status:
@@ -363,20 +443,129 @@ class ContactLensService:
                 code="contact_lens_follow_up_invalid_status_transition",
                 message=f"Cannot change follow-up from {task.status.value} to {status.value}",
             )
+        return self.change_follow_up_status_by_id(
+            visit_id,
+            task.id,
+            FollowUpStatusUpdate(status=status),
+            actor,
+            error_code="contact_lens_follow_up_invalid_status_transition",
+        )
+
+    def list_follow_ups(self, visit_id: int, actor: User) -> FollowUpListResponse:
+        self._ensure_visit(visit_id, actor)
+        items = self.repo.list_follow_ups_by_visit(visit_id, self.shop_key)
+        return FollowUpListResponse(
+            visit_id=visit_id,
+            items=[self._serialize_follow_up(item) for item in items],
+            total=len(items),
+        )
+
+    def _validate_follow_up_context(self, visit_id: int, task_type: FollowUpType) -> int | None:
+        if task_type == FollowUpType.CONTACT_LENS:
+            order = self.repo.get_order_by_visit(visit_id, self.shop_key)
+            if not order:
+                raise AppException(
+                    status_code=422,
+                    code="contact_lens_order_required",
+                    message="Create the contact lens order before scheduling this follow-up",
+                )
+            return order.id
+        if task_type == FollowUpType.PROGRESSIVE_ADAPTATION:
+            order = (
+                self.db.query(DispensingOrder)
+                .filter(DispensingOrder.visit_id == visit_id, DispensingOrder.shop_key == self.shop_key)
+                .first()
+            )
+            if not order or order.lens_data.get("lens_type") != "progressive":
+                raise AppException(
+                    status_code=422,
+                    code="progressive_order_required",
+                    message="A progressive spectacle order is required for this follow-up",
+                )
+        return None
+
+    def create_follow_up(self, visit_id: int, payload: FollowUpCreate, actor: User) -> ContactLensFollowUpRead:
+        visit = self._ensure_visit(visit_id, actor)
+        if visit.status == VisitStatus.CANCELLED:
+            raise AppException(status_code=409, code="visit_cancelled", message="Cancelled visits cannot receive follow-ups")
+        if payload.due_date < date.today():
+            raise AppException(status_code=422, code="follow_up_due_date_invalid", message="Due date cannot be in the past")
+        if payload.assigned_staff_id is not None:
+            assignee = (
+                self.db.query(User)
+                .filter(User.id == payload.assigned_staff_id, User.shop_key == self.shop_key)
+                .first()
+            )
+            if assignee is None:
+                raise AppException(status_code=404, code="follow_up_assignee_not_found", message="Assigned staff not found")
+        contact_lens_order_id = self._validate_follow_up_context(visit_id, payload.task_type)
+        task = FollowUpTask(
+            shop_key=self.shop_key,
+            customer_id=visit.customer_id,
+            visit_id=visit.id,
+            contact_lens_order_id=contact_lens_order_id,
+            task_type=payload.task_type.value,
+            due_date=payload.due_date,
+            status=FollowUpStatus.PENDING,
+            assigned_staff_id=payload.assigned_staff_id,
+            reminder_state=payload.reminder_state,
+            notes=payload.notes,
+            created_by=actor.id,
+            updated_by=actor.id,
+        )
+        self.repo.create_follow_up(task)
+        self.audit_service.log(
+            actor_user_id=actor.id,
+            action="follow_up.create",
+            entity_type="follow_up_task",
+            entity_id=str(task.id),
+            new_values={
+                "visit_id": visit.id,
+                "task_type": task.task_type,
+                "due_date": task.due_date.isoformat(),
+                "assigned_staff_id": task.assigned_staff_id,
+                "reminder_state": task.reminder_state.value,
+            },
+        )
+        self.db.commit()
+        return self._serialize_follow_up(self.repo.get_follow_up_by_id(task.id, visit.id, self.shop_key))
+
+    def change_follow_up_status_by_id(
+        self,
+        visit_id: int,
+        task_id: int,
+        payload: FollowUpStatusUpdate,
+        actor: User,
+        *,
+        error_code: str = "follow_up_invalid_status_transition",
+    ) -> ContactLensFollowUpRead:
+        self._ensure_visit(visit_id, actor)
+        task = self.repo.get_follow_up_by_id(task_id, visit_id, self.shop_key)
+        if not task:
+            raise AppException(status_code=404, code="follow_up_not_found", message="Follow-up not found")
+        if payload.status == task.status:
+            return self._serialize_follow_up(task)
+        if task.status != FollowUpStatus.PENDING or payload.status == FollowUpStatus.PENDING:
+            raise AppException(
+                status_code=409,
+                code=error_code,
+                message=f"Cannot change follow-up from {task.status.value} to {payload.status.value}",
+            )
         previous = task.status
-        task.status = status
+        task.status = payload.status
         task.updated_by = actor.id
-        if status == FollowUpStatus.COMPLETED:
+        if payload.status == FollowUpStatus.COMPLETED:
             task.completed_by = actor.id
             task.completed_at = datetime.now(UTC)
+            task.completion_notes = payload.completion_notes
         self.repo.save_follow_up(task)
         self.audit_service.log(
             actor_user_id=actor.id,
-            action="contact_lens_follow_up.status_change",
+            action="follow_up.status_change",
             entity_type="follow_up_task",
             entity_id=str(task.id),
             old_values={"status": previous.value},
-            new_values={"status": task.status.value},
+            new_values={"status": task.status.value, "completion_notes": task.completion_notes},
         )
         self.db.commit()
-        return self._serialize_follow_up(self.repo.get_follow_up_by_visit(visit_id, self.shop_key))
+        return self._serialize_follow_up(self.repo.get_follow_up_by_id(task.id, visit_id, self.shop_key))

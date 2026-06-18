@@ -36,7 +36,8 @@ const EMPTY_ORDER: DispensingOrderPayload = {
   measurements: {},
   lens: {},
   vendor_id: null,
-  manufacturing_instructions: null
+  manufacturing_instructions: null,
+  expected_delivery_date: null
 };
 
 const LENS_TYPES = [
@@ -67,6 +68,7 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
   const [form, setForm] = useState<DispensingOrderPayload>(EMPTY_ORDER);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusNotes, setStatusNotes] = useState("");
 
   const contextQuery = useQuery({
     queryKey: ["visits", visit.id, "dispensing-order"],
@@ -95,7 +97,8 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
             measurements: context.order.measurements,
             lens: context.order.lens,
             vendor_id: context.order.vendor_id,
-            manufacturing_instructions: context.order.manufacturing_instructions
+            manufacturing_instructions: context.order.manufacturing_instructions,
+            expected_delivery_date: context.order.expected_delivery_date
           }
         : EMPTY_ORDER
     );
@@ -127,8 +130,11 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
     onError: (value) => setError(getErrorMessage(value))
   });
   const statusMutation = useMutation({
-    mutationFn: (status: DispensingOrderStatus) => changeDispensingOrderStatus(visit.id, status),
-    onSuccess: (value) => succeed(`Order status changed to ${statusLabel(value.status)}`),
+    mutationFn: (status: DispensingOrderStatus) => changeDispensingOrderStatus(visit.id, status, statusNotes || null),
+    onSuccess: (value) => {
+      setStatusNotes("");
+      succeed(`Order status changed to ${statusLabel(value.status)}`);
+    },
     onError: (value) => setError(getErrorMessage(value))
   });
   const documentMutation = useMutation({
@@ -208,9 +214,10 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
             <span className="rounded-md border border-slate-500/50 px-2.5 py-1 text-xs font-semibold text-slate-200">
               {order.order_reference}
             </span>
-            <span className="rounded-md border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-semibold text-emerald-100">
+            <span className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${order.status === "cancelled" ? "border-rose-300/40 bg-rose-400/10 text-rose-100" : order.is_delayed ? "border-amber-300/40 bg-amber-400/10 text-amber-100" : "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"}`}>
               {statusLabel(order.status)}
             </span>
+            {order.is_delayed && <span className="text-xs font-semibold text-amber-200">Delayed</span>}
           </>
         )}
       </div>
@@ -298,6 +305,20 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
               dirty();
             }}
           />
+          <label className="text-sm text-slate-200">
+            <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400">Expected Delivery Date</span>
+            <input
+              aria-label="Expected Delivery Date"
+              type="date"
+              value={form.expected_delivery_date ?? ""}
+              disabled={!canEdit}
+              onChange={(event) => {
+                setForm((current) => ({ ...current, expected_delivery_date: event.target.value || null }));
+                dirty();
+              }}
+              className={inputClass()}
+            />
+          </label>
         </FieldGroup>
       )}
 
@@ -341,7 +362,31 @@ export function DispensingOrderWorkspace({ visit, mode, onDirtyChange }: Props) 
         {nextStatus && (
           <button type="button" onClick={() => statusMutation.mutate(nextStatus.status)} className="rounded-lg border border-emerald-300/35 px-3 py-2 text-sm font-semibold text-emerald-100">{nextStatus.label}</button>
         )}
+        {order && !["delivered", "cancelled"].includes(order.status) && (
+          <button type="button" onClick={() => statusMutation.mutate("cancelled")} className="rounded-lg border border-rose-300/35 px-3 py-2 text-sm font-semibold text-rose-100">Cancel Order</button>
+        )}
       </div>
+      {order && !["delivered", "cancelled"].includes(order.status) && (
+        <TextAreaField label="Status Change Notes" value={statusNotes} disabled={false} onChange={setStatusNotes} />
+      )}
+      {order?.delivered_at && (
+        <p className="text-sm text-emerald-100">Delivered {new Date(order.delivered_at).toLocaleString()} by user #{order.delivered_by ?? "unknown"}</p>
+      )}
+      {order && (order.events?.length ?? 0) > 0 && (
+        <section className="border-t border-slate-700/60 pt-4">
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Order Event History</h4>
+          <ul className="mt-3 space-y-2">
+            {(order.events ?? []).map((event) => (
+              <li key={event.id} className="rounded-lg border border-slate-700/70 bg-matte-900/60 p-3 text-sm text-slate-200">
+                <p className="font-semibold text-pink-100">{statusLabel(event.event)}</p>
+                <p className="text-xs text-slate-400">{new Date(event.occurred_at).toLocaleString()} · user #{event.user_id ?? "system"}</p>
+                {event.previous_status && <p className="text-xs text-slate-400">From {statusLabel(event.previous_status)} to {statusLabel(event.status)}</p>}
+                {event.notes && <p className="mt-1">{event.notes}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

@@ -271,6 +271,23 @@ export function CustomerRecordsPage() {
               </div>
 
               <div>
+                <h4 className="mb-2 font-medium text-slate-100">Patient Timeline</h4>
+                {customerDetailQuery.data.timeline.length === 0 && <p className="text-slate-300">No workflow events yet.</p>}
+                {customerDetailQuery.data.timeline.length > 0 && (
+                  <ol className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.timeline.map((item) => (
+                      <li key={`${item.event}-${item.entity_type}-${item.entity_id}-${item.occurred_at}`} className="border-l-2 border-pink-300/35 bg-matte-800/65 p-3">
+                        <p className="font-medium text-pink-100">{item.label}</p>
+                        <p className="text-xs text-slate-400">{new Date(item.occurred_at).toLocaleString()} · {formatClinicalValue(item.status ?? item.event)}{item.user_id ? ` · user #${item.user_id}` : ""}</p>
+                        {item.previous_status && <p className="text-xs text-slate-400">Previous: {formatClinicalValue(item.previous_status)}</p>}
+                        {item.notes && <p className="mt-1">{item.notes}</p>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+
+              <div>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="font-medium text-slate-100">Visits</p>
                   <button
@@ -344,6 +361,23 @@ export function CustomerRecordsPage() {
               </div>
 
               <div>
+                <h4 className="mb-2 font-medium text-slate-100">Spectacle Orders</h4>
+                {customerDetailQuery.data.dispensing_orders.length === 0 && <p className="text-slate-300">No spectacle orders yet.</p>}
+                {customerDetailQuery.data.dispensing_orders.length > 0 && (
+                  <ul className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.dispensing_orders.map((order) => (
+                      <li key={order.id} className={`rounded-lg border p-3 ${order.status === "cancelled" ? "border-rose-300/35 bg-rose-400/10" : "border-slate-700/70 bg-matte-800/65"}`}>
+                        <p className="font-medium text-pink-100">{order.order_reference}</p>
+                        <p className="text-xs uppercase tracking-wide text-slate-400">{formatClinicalValue(order.status)}</p>
+                        {order.delivered_at && <p className="text-xs text-emerald-200">Delivered {new Date(order.delivered_at).toLocaleString()} by user #{order.delivered_by ?? "unknown"}</p>}
+                        <button type="button" onClick={() => navigate(`${CRM_PATHS.visitWorkspace}/${order.visit_id}`)} className="mt-2 rounded-md border border-pink-300/30 px-2 py-1 text-xs text-pink-100">Open Visit</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
                 <h4 className="mb-2 font-medium text-slate-100">Contact Lens Orders</h4>
                 {customerDetailQuery.data.contact_lens_orders.length === 0 && <p className="text-slate-300">No contact lens orders yet.</p>}
                 {customerDetailQuery.data.contact_lens_orders.length > 0 && (
@@ -381,7 +415,9 @@ export function CustomerRecordsPage() {
                           <div>
                             <p className="font-medium text-pink-100">Due {new Date(`${task.due_date}T00:00:00`).toLocaleDateString()}</p>
                             <p className="text-xs uppercase tracking-wide text-slate-400">{formatClinicalValue(task.status)}</p>
+                            <p className="text-xs text-slate-400">Reminder: {formatClinicalValue(task.reminder_state)}{task.assigned_staff_id ? ` · staff #${task.assigned_staff_id}` : ""}</p>
                             {task.notes && <p>Notes: {task.notes}</p>}
+                            {task.completion_notes && <p className="text-emerald-100">Completed: {task.completion_notes}</p>}
                           </div>
                           <button
                             type="button"
