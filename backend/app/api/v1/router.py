@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     public_shops,
     staff,
     vendors,
+    visits,
 )
 
 api_router = APIRouter()
@@ -26,3 +27,4 @@ api_router.include_router(campaigns.router)
 api_router.include_router(analytics.router)
 api_router.include_router(staff.router)
 api_router.include_router(chat.router)
+api_router.include_router(visits.router)

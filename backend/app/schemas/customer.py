@@ -6,9 +6,15 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.enums import Gender, PaymentStatus
+from app.models.enums import DispensingOrderStatus, FollowUpStatus, Gender, PaymentStatus
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _blank_to_none(value: object) -> object:
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
 
 
 class CustomerBase(BaseModel):
@@ -18,9 +24,17 @@ class CustomerBase(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     whatsapp_no: str | None = Field(default=None, min_length=8, max_length=20)
     gender: Gender | None = None
+    occupation: str | None = Field(default=None, max_length=255)
+    guardian_name: str | None = Field(default=None, max_length=255)
+    guardian_contact_no: str | None = Field(default=None, min_length=8, max_length=20)
     address: str | None = Field(default=None, max_length=2000)
     purpose_of_visit: str | None = Field(default=None, max_length=255)
     whatsapp_opt_in: bool = False
+
+    @field_validator("whatsapp_no", "occupation", "guardian_name", "guardian_contact_no", "address", "purpose_of_visit", mode="before")
+    @classmethod
+    def normalize_blank_optional_strings(cls, value: object) -> object:
+        return _blank_to_none(value)
 
     @field_validator("email")
     @classmethod
@@ -36,7 +50,7 @@ class CustomerBase(BaseModel):
 
 
 class CustomerCreate(CustomerBase):
-    pass
+    registration_idempotency_key: str | None = Field(default=None, min_length=8, max_length=120)
 
 
 class CustomerUpdate(BaseModel):
@@ -46,9 +60,17 @@ class CustomerUpdate(BaseModel):
     email: str | None = Field(default=None, max_length=255)
     whatsapp_no: str | None = Field(default=None, min_length=8, max_length=20)
     gender: Gender | None = None
+    occupation: str | None = Field(default=None, max_length=255)
+    guardian_name: str | None = Field(default=None, max_length=255)
+    guardian_contact_no: str | None = Field(default=None, min_length=8, max_length=20)
     address: str | None = Field(default=None, max_length=2000)
     purpose_of_visit: str | None = Field(default=None, max_length=255)
     whatsapp_opt_in: bool | None = None
+
+    @field_validator("whatsapp_no", "occupation", "guardian_name", "guardian_contact_no", "address", "purpose_of_visit", mode="before")
+    @classmethod
+    def normalize_blank_optional_strings(cls, value: object) -> object:
+        return _blank_to_none(value)
 
     @field_validator("email")
     @classmethod
@@ -90,9 +112,53 @@ class CustomerBillSummary(BaseModel):
     created_at: datetime
 
 
+class CustomerVisitSummary(BaseModel):
+    id: int
+    visit_date: datetime
+    reason_for_visit: str
+    referred_by: str | None
+    status: str
+    assigned_examiner_id: int | None
+    visit_notes: str | None
+    created_at: datetime
+
+
+class CustomerReferralSummary(BaseModel):
+    visit_id: int
+    visit_date: datetime
+    specialist_type: str | None
+    referral_status: str | None
+    notes: str | None
+    follow_up: str | None
+
+
+class CustomerContactLensOrderSummary(BaseModel):
+    id: int
+    visit_id: int
+    order_reference: str
+    status: DispensingOrderStatus
+    vendor_id: int | None
+    created_at: datetime
+
+
+class CustomerFollowUpTaskSummary(BaseModel):
+    id: int
+    visit_id: int
+    contact_lens_order_id: int
+    task_type: str
+    due_date: date
+    status: FollowUpStatus
+    notes: str | None
+    completed_at: datetime | None
+
+
 class CustomerDetailRead(CustomerRead):
+    visits: list[CustomerVisitSummary]
+    referrals: list[CustomerReferralSummary]
     prescriptions: list[CustomerPrescriptionSummary]
     bills: list[CustomerBillSummary]
+    contact_lens_orders: list[CustomerContactLensOrderSummary]
+    follow_up_tasks: list[CustomerFollowUpTaskSummary]
 
 
 class CustomerListResponse(BaseModel):

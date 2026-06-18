@@ -306,6 +306,10 @@ class Settings(BaseSettings):
         return self.media_root_path / "prescriptions"
 
     @property
+    def vendor_order_media_dir(self) -> Path:
+        return self.media_root_path / "vendor_orders"
+
+    @property
     def chat_storage_root_path(self) -> Path:
         root = Path(self.chat_storage_root)
         if root.is_absolute():

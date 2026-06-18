@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base
@@ -15,12 +15,37 @@ class Bill(Base, TimestampMixin, UserTrackingMixin, SoftDeleteMixin):
     __tablename__ = "bills"
     __table_args__ = (
         UniqueConstraint("shop_id", "bill_number", name="uq_bills_shop_id_bill_number"),
+        Index(
+            "uq_bills_active_dispensing_order",
+            "dispensing_order_id",
+            unique=True,
+            postgresql_where=text("dispensing_order_id IS NOT NULL AND NOT is_deleted"),
+            sqlite_where=text("dispensing_order_id IS NOT NULL AND is_deleted = 0"),
+        ),
+        Index(
+            "uq_bills_active_contact_lens_order",
+            "contact_lens_order_id",
+            unique=True,
+            postgresql_where=text("contact_lens_order_id IS NOT NULL AND NOT is_deleted"),
+            sqlite_where=text("contact_lens_order_id IS NOT NULL AND is_deleted = 0"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     shop_id: Mapped[int | None] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"), nullable=True, index=True)
     bill_number: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    visit_id: Mapped[int | None] = mapped_column(ForeignKey("visits.id", ondelete="RESTRICT"), nullable=True, index=True)
+    dispensing_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dispensing_orders.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    contact_lens_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_lens_orders.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     customer_name_snapshot: Mapped[str] = mapped_column(String(255), nullable=False)
 
     product_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -57,6 +82,9 @@ class Bill(Base, TimestampMixin, UserTrackingMixin, SoftDeleteMixin):
     customer = relationship("Customer", back_populates="bills")
     items = relationship("BillItem", back_populates="bill", cascade="all, delete-orphan", order_by="BillItem.id")
     payments = relationship("Payment", back_populates="bill", cascade="all, delete-orphan", order_by="Payment.id")
+    visit = relationship("Visit", back_populates="bills")
+    dispensing_order = relationship("DispensingOrder", back_populates="bills")
+    contact_lens_order = relationship("ContactLensOrder", back_populates="bills")
 
 
 class BillItem(Base, TimestampMixin):

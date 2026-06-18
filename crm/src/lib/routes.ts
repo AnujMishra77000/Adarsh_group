@@ -12,6 +12,7 @@ export const CRM_PATHS = {
   dashboard: `${CRM_ROOT}/dashboard`,
   customers: `${CRM_ROOT}/customers`,
   customerRecords: `${CRM_ROOT}/customers/records`,
+  visitWorkspace: `${CRM_ROOT}/visits`,
   prescriptions: `${CRM_ROOT}/prescriptions`,
   prescriptionRecords: `${CRM_ROOT}/prescriptions/records`,
   vendors: `${CRM_ROOT}/vendors`,

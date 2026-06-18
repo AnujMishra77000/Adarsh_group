@@ -59,6 +59,7 @@ media_root = settings.media_root_path
 media_root.mkdir(parents=True, exist_ok=True)
 settings.invoice_media_dir.mkdir(parents=True, exist_ok=True)
 settings.prescription_media_dir.mkdir(parents=True, exist_ok=True)
+settings.vendor_order_media_dir.mkdir(parents=True, exist_ok=True)
 settings.chat_storage_root_path.mkdir(parents=True, exist_ok=True)
 
 if not settings.is_production:

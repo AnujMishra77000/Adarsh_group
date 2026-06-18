@@ -41,6 +41,9 @@ export type Bill = {
   id: number;
   bill_number: string;
   customer_id: number;
+  visit_id: number | null;
+  dispensing_order_id: number | null;
+  contact_lens_order_id: number | null;
   customer_name_snapshot: string;
 
   product_name: string;
@@ -79,6 +82,9 @@ export type Bill = {
 
 export type BillPayload = {
   customer_id: number;
+  visit_id?: number | null;
+  dispensing_order_id?: number | null;
+  contact_lens_order_id?: number | null;
   product_name: string;
   frame_name?: string | null;
   whole_price: number;

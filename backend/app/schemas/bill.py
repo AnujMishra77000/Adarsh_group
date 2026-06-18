@@ -50,6 +50,9 @@ class BillPaymentRead(BillPaymentBase):
 
 class BillBase(BaseModel):
     customer_id: int = Field(ge=1)
+    visit_id: int | None = Field(default=None, ge=1)
+    dispensing_order_id: int | None = Field(default=None, ge=1)
+    contact_lens_order_id: int | None = Field(default=None, ge=1)
     product_name: str | None = Field(default=None, min_length=1, max_length=255)
     frame_name: str | None = Field(default=None, max_length=255)
     whole_price: Decimal | None = Field(default=None, ge=0)
@@ -98,6 +101,9 @@ class BillRead(BaseModel):
     id: int
     bill_number: str
     customer_id: int
+    visit_id: int | None
+    dispensing_order_id: int | None
+    contact_lens_order_id: int | None
     customer_name_snapshot: str
 
     product_name: str

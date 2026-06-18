@@ -1,14 +1,15 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 
 import { createBill } from "@/features/bills/api";
 import { calculateMultiBillSummary } from "@/features/bills/calculations";
 import { searchCustomers } from "@/features/customers/api";
+import { getContactLensContext, getDispensingOrderContext } from "@/features/visits/api";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getErrorMessage } from "@/lib/errors";
 import { CRM_PATHS } from "@/lib/routes";
@@ -108,7 +109,10 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
-function buildBillPayload(values: BillFormValues): BillPayload {
+function buildBillPayload(
+  values: BillFormValues,
+  context: { visitId: number | null; dispensingOrderId: number | null; contactLensOrderId: number | null }
+): BillPayload {
   const items: BillItemPayload[] = values.items.map((item) => ({
     item_type: item.item_type,
     item_name: item.item_name.trim(),
@@ -130,6 +134,9 @@ function buildBillPayload(values: BillFormValues): BillPayload {
 
   return {
     customer_id: values.customer_id,
+    visit_id: context.visitId,
+    dispensing_order_id: context.dispensingOrderId,
+    contact_lens_order_id: context.contactLensOrderId,
     product_name: firstItem.item_name,
     frame_name: frameItem?.item_name ?? null,
     whole_price: summary.subtotal,
@@ -150,7 +157,22 @@ export function BillingPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [customerLookup, setCustomerLookup] = useState("");
+  const prefilledOrderRef = useRef<number | null>(null);
+  const prefilledContactLensOrderRef = useRef<number | null>(null);
   const debouncedCustomerLookup = useDebouncedValue(customerLookup, 300);
+
+  const parsedVisitId = Number(searchParams.get("visit_id") ?? 0);
+  const visitId = Number.isInteger(parsedVisitId) && parsedVisitId > 0 ? parsedVisitId : null;
+  const parsedOrderId = Number(searchParams.get("dispensing_order_id") ?? 0);
+  const dispensingOrderId = Number.isInteger(parsedOrderId) && parsedOrderId > 0 ? parsedOrderId : null;
+  const parsedContactLensOrderId = Number(searchParams.get("contact_lens_order_id") ?? 0);
+  const contactLensOrderId = Number.isInteger(parsedContactLensOrderId) && parsedContactLensOrderId > 0
+    ? parsedContactLensOrderId
+    : null;
+  const requestedReturnTo = searchParams.get("return_to") ?? "";
+  const returnTo = requestedReturnTo === CRM_PATHS.root || requestedReturnTo.startsWith(`${CRM_PATHS.root}/`)
+    ? requestedReturnTo
+    : null;
 
   const {
     register,
@@ -182,6 +204,17 @@ export function BillingPage() {
     enabled: debouncedCustomerLookup.length >= 2
   });
 
+  const dispensingOrderQuery = useQuery({
+    queryKey: ["visits", visitId, "dispensing-order"],
+    queryFn: () => getDispensingOrderContext(visitId as number),
+    enabled: visitId !== null && dispensingOrderId !== null
+  });
+  const contactLensOrderQuery = useQuery({
+    queryKey: ["visits", visitId, "contact-lens"],
+    queryFn: () => getContactLensContext(visitId as number),
+    enabled: visitId !== null && contactLensOrderId !== null
+  });
+
   useEffect(() => {
     const customerIdRaw = searchParams.get("customer_id");
     const customerQuery = (searchParams.get("customer_query") ?? "").trim();
@@ -209,6 +242,50 @@ export function BillingPage() {
     }
   }, [searchParams, setSearchParams, setValue]);
 
+  useEffect(() => {
+    const order = dispensingOrderQuery.data?.order;
+    if (!order || order.id !== dispensingOrderId || prefilledOrderRef.current === order.id) {
+      return;
+    }
+
+    const frameName = [order.frame.brand, order.frame.model_number].filter(Boolean).join(" ").trim();
+    const lensType = order.lens.lens_type
+      ? order.lens.lens_type.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+      : "Lens";
+    const lensName = [lensType, order.lens.brand, order.lens.design].filter(Boolean).join(" · ");
+    const items: BillFormValues["items"] = [];
+
+    if (frameName) {
+      items.push({ item_type: "frame", item_name: frameName, quantity: 1, unit_price: 0, discount: 0 });
+    }
+    if (lensName) {
+      items.push({ item_type: "lens", item_name: lensName, quantity: 1, unit_price: 0, discount: 0 });
+    }
+    if (order.lens.coating) {
+      items.push({ item_type: "coating", item_name: order.lens.coating, quantity: 1, unit_price: 0, discount: 0 });
+    }
+
+    if (items.length > 0) {
+      itemFields.replace(items);
+    }
+    prefilledOrderRef.current = order.id;
+  }, [dispensingOrderId, dispensingOrderQuery.data?.order, itemFields]);
+
+  useEffect(() => {
+    const order = contactLensOrderQuery.data?.order;
+    if (!order || order.id !== contactLensOrderId || prefilledContactLensOrderRef.current === order.id) {
+      return;
+    }
+
+    const itemName = [
+      order.lens_details.brand,
+      order.lens_details.material,
+      order.lens_details.replacement_schedule
+    ].filter(Boolean).join(" · ") || "Contact lenses";
+    itemFields.replace([{ item_type: "contact_lens", item_name: itemName, quantity: 1, unit_price: 0, discount: 0 }]);
+    prefilledContactLensOrderRef.current = order.id;
+  }, [contactLensOrderId, contactLensOrderQuery.data?.order, itemFields]);
+
   const createMutation = useMutation({
     mutationFn: createBill,
     onSuccess: (bill) => {
@@ -221,12 +298,17 @@ export function BillingPage() {
       setCustomerLookup("");
       queryClient.invalidateQueries({ queryKey: ["bills"] });
       queryClient.invalidateQueries({ queryKey: ["bill", bill.id] });
+      if (visitId !== null) {
+        queryClient.invalidateQueries({ queryKey: ["visits", visitId, "billing"] });
+      }
+      const detailParams = returnTo ? `?${new URLSearchParams({ return_to: returnTo }).toString()}` : "";
+      navigate(`${CRM_PATHS.billing}/view/${bill.id}${detailParams}`);
     },
     onError: (error) => toast.error(getErrorMessage(error))
   });
 
   const onSubmit = (values: BillFormValues) => {
-    createMutation.mutate(buildBillPayload(values));
+    createMutation.mutate(buildBillPayload(values, { visitId, dispensingOrderId, contactLensOrderId }));
   };
 
   return (
@@ -239,14 +321,30 @@ export function BillingPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => navigate(CRM_PATHS.billingRecords)}
-          className="rounded-lg border border-pink-300/45 bg-pink-500/15 px-3 py-2 text-sm font-medium text-pink-100"
-        >
-          View Saved Bills
-        </button>
+        <div className="flex flex-wrap gap-2">
+          {returnTo && (
+            <Link to={returnTo} className="rounded-lg border border-slate-500/50 px-3 py-2 text-sm font-medium text-slate-200">
+              Return to Visit
+            </Link>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate(CRM_PATHS.billingRecords)}
+            className="rounded-lg border border-pink-300/45 bg-pink-500/15 px-3 py-2 text-sm font-medium text-pink-100"
+          >
+            View Saved Bills
+          </button>
+        </div>
       </div>
+
+      {visitId !== null && (
+        <div className="mb-5 rounded-lg border border-emerald-300/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
+          Billing for visit #{visitId}{dispensingOrderId !== null ? ` · dispensing order #${dispensingOrderId}` : ""}
+          {contactLensOrderId !== null ? ` · contact lens order #${contactLensOrderId}` : ""}
+          {dispensingOrderQuery.isError && <p className="mt-1 text-rose-200">{getErrorMessage(dispensingOrderQuery.error)}</p>}
+          {contactLensOrderQuery.isError && <p className="mt-1 text-rose-200">{getErrorMessage(contactLensOrderQuery.error)}</p>}
+        </div>
+      )}
 
       <form className="space-y-5" onSubmit={handleSubmit(onSubmit)}>
         <div className="space-y-2">

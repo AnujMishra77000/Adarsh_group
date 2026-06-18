@@ -28,6 +28,60 @@ class PaymentStatus(str, Enum):
     PAID = "paid"
 
 
+class VisitStatus(str, Enum):
+    DRAFT = "draft"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class ExamSectionState(str, Enum):
+    INCOMPLETE = "incomplete"
+    COMPLETE = "complete"
+    OPTIONAL = "optional"
+    NOT_APPLICABLE = "not_applicable"
+    FUTURE = "future"
+
+
+class PrescriptionVersionStatus(str, Enum):
+    DRAFT = "draft"
+    FINALIZED = "finalized"
+    SUPERSEDED = "superseded"
+    CANCELLED = "cancelled"
+
+
+class DispensingOrderStatus(str, Enum):
+    DRAFT = "draft"
+    READY_FOR_VENDOR = "ready_for_vendor"
+    SENT_TO_VENDOR = "sent_to_vendor"
+    IN_PRODUCTION = "in_production"
+    READY_FOR_DELIVERY = "ready_for_delivery"
+    DELIVERED = "delivered"
+    CANCELLED = "cancelled"
+
+
+class LensType(str, Enum):
+    SINGLE_VISION = "single_vision"
+    BIFOCAL = "bifocal"
+    PROGRESSIVE = "progressive"
+    OFFICE_LENS = "office_lens"
+    OCCUPATIONAL_LENS = "occupational_lens"
+    SUNGLASS_LENS = "sunglass_lens"
+
+
+class FollowUpStatus(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class FollowUpInterval(str, Enum):
+    ONE_WEEK = "one_week"
+    FIFTEEN_DAYS = "fifteen_days"
+    ONE_MONTH = "one_month"
+    CUSTOM = "custom"
+
+
 class BillItemType(str, Enum):
     FRAME = "frame"
     LENS = "lens"
@@ -65,6 +119,7 @@ class WhatsAppModuleType(str, Enum):
     PRESCRIPTION = "prescription"
     BILL = "bill"
     CAMPAIGN = "campaign"
+    DISPENSING_ORDER = "dispensing_order"
 
 
 def enum_values(enum_cls: type[Enum]) -> list[str]:

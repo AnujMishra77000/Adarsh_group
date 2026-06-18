@@ -1,0 +1,86 @@
+<h2>Contact-Lens Workspace Layout</h2>
+<p class="subtitle">Choose the layout that feels most natural inside the existing Visit Workspace. All options keep the current dark CRM styling and conditional Contact Lens navigation.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#141218;color:#e8e3ec;min-height:330px">
+      <div style="display:grid;grid-template-columns:90px 1fr;gap:12px;height:100%">
+        <div style="border-right:1px solid #493340;padding-right:8px;font-size:10px;line-height:2">
+          <div>Visual Acuity</div><div>Refraction</div><div style="color:#f4a7c1">Contact Lens</div><div>Billing</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:10px">Contact Lens Work-up</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+            <div class="mock-input">Indication</div><div class="mock-input">K Readings</div>
+            <div class="mock-input">HVID</div><div class="mock-input">TBUT</div>
+            <div class="mock-input">Right Eye Power</div><div class="mock-input">Left Eye Power</div>
+            <div class="mock-input">Brand</div><div class="mock-input">Replacement</div>
+            <div class="mock-input">Trial Status</div><div class="mock-input">Training</div>
+            <div class="mock-input">Follow-up</div><div class="mock-input">Order Status</div>
+          </div>
+          <button class="mock-button" style="margin-top:10px">Save Everything</button>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. One Continuous Form</h3>
+      <p>All work-up, trial, order, and follow-up fields on one page. Fast to build, but long and visually dense.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#141218;color:#e8e3ec;min-height:330px">
+      <div style="display:grid;grid-template-columns:90px 1fr;gap:12px;height:100%">
+        <div style="border-right:1px solid #493340;padding-right:8px;font-size:10px;line-height:2">
+          <div>Visual Acuity</div><div>Refraction</div><div style="color:#f4a7c1;font-weight:700">Contact Lens</div><div>Billing</div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div><div style="font-size:13px;font-weight:700">Contact Lens</div><div style="font-size:9px;color:#a9a2af">Riya Shah · Visit #12 · Draft</div></div>
+            <span style="font-size:9px;border:1px solid #5b9b78;padding:4px 7px;border-radius:4px;color:#a7efc5">Order Draft</span>
+          </div>
+          <div style="display:flex;gap:4px;margin:12px 0;border-bottom:1px solid #493340;padding-bottom:6px;font-size:9px">
+            <span style="background:#8a3155;color:white;padding:5px 7px;border-radius:4px">Work-up</span>
+            <span style="padding:5px 7px">Prescription</span><span style="padding:5px 7px">Trial & Training</span><span style="padding:5px 7px">Order</span><span style="padding:5px 7px">Follow-up</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="mock-input">Indication</div><div class="mock-input">Tear Film</div>
+            <div class="mock-input">Right K Reading</div><div class="mock-input">Left K Reading</div>
+            <div class="mock-input">HVID (mm)</div><div class="mock-input">TBUT (sec)</div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+            <span style="font-size:9px;color:#a7efc5">Saved 12:42 PM</span>
+            <button class="mock-button">Save Work-up</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Embedded Section Workspace (Recommended)</h3>
+      <p>Contact Lens stays inside the visit sidebar, with compact internal tabs and independent saves. Familiar, scalable, and desktop-friendly.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px;background:#141218;color:#e8e3ec;min-height:330px;display:flex;align-items:center;justify-content:center">
+      <div style="width:88%;border:1px solid #604454;background:#201a22;padding:14px;box-shadow:0 14px 30px #0008">
+        <div style="display:flex;justify-content:space-between"><strong style="font-size:13px">Contact Lens Work-up</strong><span>×</span></div>
+        <div style="display:flex;gap:5px;margin:12px 0">
+          <span style="height:4px;flex:1;background:#d65486"></span><span style="height:4px;flex:1;background:#604454"></span><span style="height:4px;flex:1;background:#604454"></span><span style="height:4px;flex:1;background:#604454"></span>
+        </div>
+        <div style="font-size:10px;color:#aaa2ad;margin-bottom:10px">Step 1 of 4 · Assessment</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="mock-input">Indication</div><div class="mock-input">K Readings</div><div class="mock-input">HVID</div><div class="mock-input">TBUT</div></div>
+        <div style="display:flex;justify-content:flex-end;gap:7px;margin-top:14px"><button class="mock-button">Save & Next</button></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Guided Modal Wizard</h3>
+      <p>Strong guidance for new staff, but interrupts section switching and makes draft review or correcting earlier values slower.</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros"><h4>Recommended behaviour</h4><ul><li>Hidden for ordinary spectacle visits</li><li>One active work-up and order per visit</li><li>Right and left eye tables stay visually paired</li><li>Billing remains the existing shared screen</li></ul></div>
+  <div class="cons"><h4>Avoid</h4><ul><li>A second billing form inside Contact Lens</li><li>A separate visual design or sidebar</li><li>One giant required clinical form</li><li>Automatically changing finalized bills</li></ul></div>
+</div>

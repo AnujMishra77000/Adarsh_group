@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.shop_scope import assign_shop_scope, shop_filter
 from app.models.customer import Customer
+from app.models.visit import Visit
 
 
 class CustomerRepository:
@@ -47,6 +48,9 @@ class CustomerRepository:
             .options(
                 joinedload(Customer.prescriptions),
                 joinedload(Customer.bills),
+                joinedload(Customer.visits).joinedload(Visit.exam_sections),
+                joinedload(Customer.contact_lens_orders),
+                joinedload(Customer.follow_up_tasks),
             )
             .filter(Customer.id == customer_pk, Customer.is_deleted.is_(False), shop_filter(self.db, Customer, shop_key))
             .first()
@@ -58,6 +62,17 @@ class CustomerRepository:
             Customer.is_deleted.is_(False),
             shop_filter(self.db, Customer, shop_key),
         ).first()
+
+    def get_by_registration_idempotency_key(self, registration_idempotency_key: str, shop_key: str) -> Customer | None:
+        return (
+            self.db.query(Customer)
+            .filter(
+                Customer.registration_idempotency_key == registration_idempotency_key,
+                Customer.is_deleted.is_(False),
+                shop_filter(self.db, Customer, shop_key),
+            )
+            .first()
+        )
 
     def exists_business_id(self, customer_business_id: str, shop_key: str | None = None) -> bool:
         query = self.db.query(Customer.id).filter(Customer.customer_id == customer_business_id)

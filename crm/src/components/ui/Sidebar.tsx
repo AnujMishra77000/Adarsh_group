@@ -32,7 +32,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { to: CRM_PATHS.dashboard, label: "Dashboard", shortLabel: "Home", icon: LayoutDashboard },
-  { to: CRM_PATHS.customers, label: "Customers", shortLabel: "Cust", icon: Users },
+  { to: CRM_PATHS.customers, label: "Patients", shortLabel: "Pt", icon: Users },
   { to: CRM_PATHS.prescriptions, label: "Prescriptions", shortLabel: "Rx", icon: FileText },
   { to: CRM_PATHS.vendors, label: "Vendors", shortLabel: "Vendor", icon: UserSquare2 },
   { to: CRM_PATHS.billing, label: "Billing", shortLabel: "Bill", icon: Receipt },

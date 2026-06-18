@@ -17,6 +17,9 @@ from app.models.enums import BillItemType, PaymentMode, PaymentStatus, WhatsAppM
 from app.models.user import User
 from app.repositories.bill_repository import BillRepository
 from app.repositories.customer_repository import CustomerRepository
+from app.repositories.contact_lens_repository import ContactLensRepository
+from app.repositories.dispensing_order_repository import DispensingOrderRepository
+from app.repositories.visit_repository import VisitRepository
 from app.schemas.bill import BillCreate, BillItemCreate, BillListResponse, BillPaymentCreate, BillRead, BillUpdate
 from app.services.audit_service import AuditService
 from app.services.document_file_service import build_media_file_reference, resolve_media_file_reference
@@ -35,6 +38,9 @@ class BillService:
         self.shop_key = shop_key
         self.repo = BillRepository(db)
         self.customer_repo = CustomerRepository(db)
+        self.contact_lens_repo = ContactLensRepository(db)
+        self.dispensing_order_repo = DispensingOrderRepository(db)
+        self.visit_repo = VisitRepository(db)
         self.audit_service = AuditService(db, shop_key=shop_key)
         self.invoice_pdf_service = InvoicePdfService()
         self.email_service = EmailService()
@@ -392,6 +398,9 @@ class BillService:
             id=bill.id,
             bill_number=bill.bill_number,
             customer_id=bill.customer_id,
+            visit_id=bill.visit_id,
+            dispensing_order_id=bill.dispensing_order_id,
+            contact_lens_order_id=bill.contact_lens_order_id,
             customer_name_snapshot=bill.customer_name_snapshot,
             product_name=bill.product_name,
             frame_name=bill.frame_name,
@@ -670,10 +679,103 @@ class BillService:
 
         return self._resolve_bill_pdf_file(bill)
 
+    def _resolve_workflow_context(
+        self,
+        *,
+        customer_id: int,
+        visit_id: int | None,
+        dispensing_order_id: int | None,
+        contact_lens_order_id: int | None,
+    ) -> tuple[int | None, int | None, int | None]:
+        visit = None
+        if visit_id is not None:
+            visit = self.visit_repo.get_by_id(visit_id, shop_key=self.shop_key)
+            if not visit:
+                raise AppException(status_code=404, code="visit_not_found", message="Visit not found")
+            if visit.customer_id != customer_id:
+                raise AppException(
+                    status_code=422,
+                    code="bill_context_customer_mismatch",
+                    message="The selected visit belongs to a different patient",
+                )
+
+        if dispensing_order_id is not None and contact_lens_order_id is not None:
+            raise AppException(
+                status_code=422,
+                code="bill_multiple_order_contexts",
+                message="A bill can belong to either a spectacle order or a contact lens order",
+            )
+
+        if dispensing_order_id is None and contact_lens_order_id is None:
+            return visit_id, None, None
+
+        if contact_lens_order_id is not None:
+            order = self.contact_lens_repo.get_order_by_id(contact_lens_order_id, shop_key=self.shop_key)
+            if not order:
+                raise AppException(
+                    status_code=404,
+                    code="contact_lens_order_not_found",
+                    message="Contact lens order not found",
+                )
+            if order.customer_id != customer_id:
+                raise AppException(
+                    status_code=422,
+                    code="bill_context_customer_mismatch",
+                    message="The contact lens order belongs to a different patient",
+                )
+            if visit is not None and order.visit_id != visit.id:
+                raise AppException(
+                    status_code=422,
+                    code="bill_context_visit_mismatch",
+                    message="The contact lens order belongs to a different visit",
+                )
+            if self.repo.get_active_by_contact_lens_order(order.id, shop_key=self.shop_key):
+                raise AppException(
+                    status_code=409,
+                    code="contact_lens_order_already_billed",
+                    message="This contact lens order already has an active bill",
+                )
+            return order.visit_id, None, order.id
+
+        assert dispensing_order_id is not None
+        order = self.dispensing_order_repo.get_by_id(dispensing_order_id, shop_key=self.shop_key)
+        if not order:
+            raise AppException(
+                status_code=404,
+                code="dispensing_order_not_found",
+                message="Dispensing order not found",
+            )
+        if order.customer_id != customer_id:
+            raise AppException(
+                status_code=422,
+                code="bill_context_customer_mismatch",
+                message="The dispensing order belongs to a different patient",
+            )
+        if visit is not None and order.visit_id != visit.id:
+            raise AppException(
+                status_code=422,
+                code="bill_context_visit_mismatch",
+                message="The dispensing order belongs to a different visit",
+            )
+        if self.repo.get_active_by_dispensing_order(order.id, shop_key=self.shop_key):
+            raise AppException(
+                status_code=409,
+                code="dispensing_order_already_billed",
+                message="This dispensing order already has an active bill",
+            )
+        return order.visit_id, order.id, None
+
     def create_bill(self, payload: BillCreate, actor: User) -> BillRead:
         customer = self.customer_repo.get_by_id(payload.customer_id, shop_key=self.shop_key)
         if not customer:
             raise AppException(status_code=404, code="customer_not_found", message="Customer not found")
+
+        visit_id, dispensing_order_id, contact_lens_order_id = self._resolve_workflow_context(
+            customer_id=customer.id,
+            visit_id=payload.visit_id,
+            dispensing_order_id=payload.dispensing_order_id,
+            contact_lens_order_id=payload.contact_lens_order_id,
+        )
 
         items_data = self._resolve_items_for_create(payload)
         payments_data = self._resolve_payments_for_create(payload)
@@ -686,6 +788,9 @@ class BillService:
             bill = Bill(
                 bill_number=bill_number,
                 customer_id=customer.id,
+                visit_id=visit_id,
+                dispensing_order_id=dispensing_order_id,
+                contact_lens_order_id=contact_lens_order_id,
                 customer_name_snapshot=customer.name,
                 product_name="",
                 frame_name=None,
@@ -725,6 +830,9 @@ class BillService:
                     new_values={
                         "bill_number": bill.bill_number,
                         "customer_id": bill.customer_id,
+                        "visit_id": bill.visit_id,
+                        "dispensing_order_id": bill.dispensing_order_id,
+                        "contact_lens_order_id": bill.contact_lens_order_id,
                         "grand_total": str(bill.grand_total),
                         "paid_total": str(bill.paid_total),
                         "balance_amount": str(bill.balance_amount),
@@ -737,6 +845,18 @@ class BillService:
                 self.db.rollback()
                 if "bill_number" in str(exc).lower():
                     continue
+                if "dispensing_order" in str(exc).lower():
+                    raise AppException(
+                        status_code=409,
+                        code="dispensing_order_already_billed",
+                        message="This dispensing order already has an active bill",
+                    ) from exc
+                if "contact_lens_order" in str(exc).lower():
+                    raise AppException(
+                        status_code=409,
+                        code="contact_lens_order_already_billed",
+                        message="This contact lens order already has an active bill",
+                    ) from exc
                 raise AppException(status_code=409, code="bill_create_conflict", message="Unable to create bill") from exc
 
         if bill is None or bill.id is None:

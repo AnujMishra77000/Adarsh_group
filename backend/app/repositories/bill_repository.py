@@ -79,6 +79,49 @@ class BillRepository:
             query = query.join(Customer, Customer.id == Bill.customer_id).filter(self._shop_clause(shop_key))
         return query.filter(Bill.bill_number == bill_number).first()
 
+    def get_active_by_dispensing_order(self, order_id: int, shop_key: str) -> Bill | None:
+        return (
+            self.db.query(Bill)
+            .join(Customer, Customer.id == Bill.customer_id)
+            .options(joinedload(Bill.customer), joinedload(Bill.items), joinedload(Bill.payments))
+            .filter(
+                Bill.dispensing_order_id == order_id,
+                Bill.is_deleted.is_(False),
+                Customer.is_deleted.is_(False),
+                self._shop_clause(shop_key),
+            )
+            .first()
+        )
+
+    def get_active_by_contact_lens_order(self, order_id: int, shop_key: str) -> Bill | None:
+        return (
+            self.db.query(Bill)
+            .join(Customer, Customer.id == Bill.customer_id)
+            .options(joinedload(Bill.customer), joinedload(Bill.items), joinedload(Bill.payments))
+            .filter(
+                Bill.contact_lens_order_id == order_id,
+                Bill.is_deleted.is_(False),
+                Customer.is_deleted.is_(False),
+                self._shop_clause(shop_key),
+            )
+            .first()
+        )
+
+    def list_active_for_visit(self, visit_id: int, shop_key: str) -> list[Bill]:
+        return (
+            self.db.query(Bill)
+            .join(Customer, Customer.id == Bill.customer_id)
+            .options(joinedload(Bill.customer), joinedload(Bill.items), joinedload(Bill.payments))
+            .filter(
+                Bill.visit_id == visit_id,
+                Bill.is_deleted.is_(False),
+                Customer.is_deleted.is_(False),
+                self._shop_clause(shop_key),
+            )
+            .order_by(Bill.created_at.desc())
+            .all()
+        )
+
     def count_created_for_day(self, target_date: date, shop_key: str) -> int:
         start = datetime.combine(target_date, time.min, tzinfo=UTC)
         end = start + timedelta(days=1)

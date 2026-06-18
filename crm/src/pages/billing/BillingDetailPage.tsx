@@ -34,6 +34,10 @@ export function BillingDetailPage() {
   const currentRole = currentUserQuery.data?.role;
   const canUpdateBills = currentRole === "admin" || currentRole === "staff";
   const focusPdf = searchParams.get("focus") === "pdf";
+  const requestedReturnTo = searchParams.get("return_to") ?? "";
+  const returnTo = requestedReturnTo === CRM_PATHS.root || requestedReturnTo.startsWith(`${CRM_PATHS.root}/`)
+    ? requestedReturnTo
+    : null;
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [pdfPreviewError, setPdfPreviewError] = useState<string | null>(null);
   const [isPdfPreviewLoading, setIsPdfPreviewLoading] = useState(false);
@@ -178,7 +182,7 @@ export function BillingDetailPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => navigate(CRM_PATHS.billingRecords)}
+              onClick={() => navigate(returnTo ?? CRM_PATHS.billingRecords)}
               className="rounded-lg border border-slate-500/50 px-3 py-2 text-sm text-slate-200"
             >
               Back
@@ -186,7 +190,9 @@ export function BillingDetailPage() {
             {canUpdateBills && (
               <button
                 type="button"
-                onClick={() => navigate(`${CRM_PATHS.billing}/edit/${billId}`)}
+                onClick={() => navigate(
+                  `${CRM_PATHS.billing}/edit/${billId}${returnTo ? `?${new URLSearchParams({ return_to: returnTo }).toString()}` : ""}`
+                )}
                 className="rounded-lg border border-amber-400/35 px-3 py-2 text-sm text-amber-200"
               >
                 Update Bill

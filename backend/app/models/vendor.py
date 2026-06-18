@@ -19,3 +19,5 @@ class Vendor(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
 
     shop = relationship("Shop", back_populates="vendors")
+    dispensing_orders = relationship("DispensingOrder", back_populates="vendor")
+    contact_lens_orders = relationship("ContactLensOrder", back_populates="vendor")

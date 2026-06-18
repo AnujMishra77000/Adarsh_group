@@ -80,20 +80,35 @@ services:
         condition: service_healthy
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "-l", "INFO"]
 
-  frontend:
+  crm:
     build:
-      context: ./frontend
+      context: ./crm
       dockerfile: Dockerfile
-    container_name: eye_boutique_frontend
+    container_name: eye_boutique_crm
     env_file:
       - .env
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend:/app
+      - ./crm:/app
       - /app/node_modules
     depends_on:
       - backend
+
+  website:
+    build:
+      context: ./website
+      dockerfile: Dockerfile
+    container_name: eye_boutique_website
+    env_file:
+      - .env
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./website:/app
+      - /app/node_modules
+    depends_on:
+      - crm
 
 volumes:
   postgres_data:

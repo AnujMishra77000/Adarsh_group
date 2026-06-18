@@ -8,6 +8,11 @@ import { deleteCustomer, getCustomer, listCustomers } from "@/features/customers
 import { getErrorMessage } from "@/lib/errors";
 import { CRM_PATHS } from "@/lib/routes";
 
+function formatClinicalValue(value: string | null): string {
+  if (!value) return "-";
+  return value.replace(/_/g, " ");
+}
+
 export function CustomerRecordsPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -87,9 +92,9 @@ export function CustomerRecordsPage() {
       <section className="rounded-2xl border border-pink-300/20 bg-matte-850/90 p-5 shadow-neon-ring">
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-slate-100">Customer Records</h2>
+            <h2 className="text-xl font-semibold text-slate-100">Patient Records</h2>
             <p className="text-sm text-slate-300">
-              Search and open full customer history. Use customer ID, name, contact number, or WhatsApp number.
+              Search and open full patient history. Use patient ID, name, contact number, or WhatsApp number.
             </p>
           </div>
           <button
@@ -97,7 +102,7 @@ export function CustomerRecordsPage() {
             onClick={() => navigate(CRM_PATHS.customers)}
             className="rounded-lg border border-pink-300/45 bg-pink-400/15 px-3 py-2 text-sm font-medium text-pink-50"
           >
-            Create Customer
+            New Patient
           </button>
         </div>
 
@@ -105,7 +110,7 @@ export function CustomerRecordsPage() {
           <input
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Search customer..."
+            placeholder="Search patient..."
             className="w-full rounded-lg border border-pink-300/30 bg-matte-800 px-3 py-2 text-sm text-slate-100 outline-none focus:border-pink-200"
           />
           <button
@@ -237,11 +242,11 @@ export function CustomerRecordsPage() {
         </section>
 
         <section className="rounded-2xl border border-pink-300/20 bg-matte-850/90 p-5 shadow-neon-ring">
-          <h3 className="text-lg font-semibold text-slate-100">Customer Full Detail</h3>
-          {!selectedCustomerId && <p className="mt-2 text-sm text-slate-300">Select a customer to view full details.</p>}
+          <h3 className="text-lg font-semibold text-slate-100">Patient Full Detail</h3>
+          {!selectedCustomerId && <p className="mt-2 text-sm text-slate-300">Select a patient to view full details.</p>}
 
           {customerDetailQuery.isLoading && selectedCustomerId !== null && (
-            <p className="mt-2 text-sm text-slate-200">Loading customer detail...</p>
+            <p className="mt-2 text-sm text-slate-200">Loading patient detail...</p>
           )}
           {customerDetailQuery.isError && <p className="mt-2 text-sm text-rose-200">{getErrorMessage(customerDetailQuery.error)}</p>}
 
@@ -252,10 +257,76 @@ export function CustomerRecordsPage() {
                   {customerDetailQuery.data.name} ({customerDetailQuery.data.customer_id})
                 </p>
                 <p>Contact: {customerDetailQuery.data.contact_no}</p>
+                <p>
+                  Age/Gender:{" "}
+                  {[customerDetailQuery.data.age !== null ? `${customerDetailQuery.data.age} yrs` : null, customerDetailQuery.data.gender]
+                    .filter(Boolean)
+                    .join(" / ") || "-"}
+                </p>
                 <p>Email: {customerDetailQuery.data.email || "-"}</p>
                 <p>WhatsApp: {customerDetailQuery.data.whatsapp_no || "-"}</p>
-                <p>Purpose: {customerDetailQuery.data.purpose_of_visit || "-"}</p>
+                <p>Occupation: {customerDetailQuery.data.occupation || "-"}</p>
+                <p>Guardian: {customerDetailQuery.data.guardian_name || "-"}</p>
                 <p>Address: {customerDetailQuery.data.address || "-"}</p>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="font-medium text-slate-100">Visits</p>
+                  <button
+                    type="button"
+                    onClick={() => navigate(CRM_PATHS.customers)}
+                    className="rounded-md border border-emerald-400/30 px-2 py-1 text-xs text-emerald-200 hover:border-emerald-300"
+                  >
+                    Start New Visit
+                  </button>
+                </div>
+                {customerDetailQuery.data.visits.length === 0 && <p className="text-slate-300">No visits yet.</p>}
+                {customerDetailQuery.data.visits.length > 0 && (
+                  <ul className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.visits.map((visit) => {
+                      const canContinue = visit.status === "draft" || visit.status === "in_progress";
+                      return (
+                        <li key={visit.id} className="rounded-lg border border-slate-700/70 bg-matte-800/65 p-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="font-medium text-pink-100">{new Date(visit.visit_date).toLocaleString()}</p>
+                              <p>{visit.reason_for_visit}</p>
+                              <p className="text-xs uppercase tracking-wide text-slate-400">
+                                {visit.status.replace(/_/g, " ")}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => navigate(`${CRM_PATHS.visitWorkspace}/${visit.id}`)}
+                              className="rounded-md border border-pink-300/30 px-2 py-1 text-xs text-pink-100 hover:border-pink-200"
+                            >
+                              {canContinue ? "Continue Visit" : "Open Visit"}
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <p className="mb-2 font-medium text-slate-100">Referrals</p>
+                {customerDetailQuery.data.referrals.length === 0 && <p className="text-slate-300">No referrals yet.</p>}
+                {customerDetailQuery.data.referrals.length > 0 && (
+                  <ul className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.referrals.map((referral) => (
+                      <li key={`${referral.visit_id}-${referral.visit_date}`} className="rounded-lg border border-slate-700/70 bg-matte-800/65 p-3">
+                        <p className="font-medium text-pink-100">{new Date(referral.visit_date).toLocaleString()}</p>
+                        <p>Specialist: {formatClinicalValue(referral.specialist_type)}</p>
+                        <p>Status: {formatClinicalValue(referral.referral_status)}</p>
+                        {referral.notes && <p>Notes: {referral.notes}</p>}
+                        {referral.follow_up && <p>Follow-up: {referral.follow_up}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <div>
@@ -266,6 +337,60 @@ export function CustomerRecordsPage() {
                     {customerDetailQuery.data.prescriptions.map((item) => (
                       <li key={item.id}>
                         {new Date(item.prescription_date).toLocaleDateString()} {item.notes ? `- ${item.notes}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <h4 className="mb-2 font-medium text-slate-100">Contact Lens Orders</h4>
+                {customerDetailQuery.data.contact_lens_orders.length === 0 && <p className="text-slate-300">No contact lens orders yet.</p>}
+                {customerDetailQuery.data.contact_lens_orders.length > 0 && (
+                  <ul className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.contact_lens_orders.map((order) => (
+                      <li key={order.id} className="rounded-lg border border-slate-700/70 bg-matte-800/65 p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-medium text-pink-100">{order.order_reference}</p>
+                            <p className="text-xs uppercase tracking-wide text-slate-400">{formatClinicalValue(order.status)}</p>
+                            <p className="text-xs text-slate-400">Created {new Date(order.created_at).toLocaleString()}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`${CRM_PATHS.visitWorkspace}/${order.visit_id}`)}
+                            className="rounded-md border border-pink-300/30 px-2 py-1 text-xs text-pink-100 hover:border-pink-200"
+                          >
+                            Continue Visit
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <h4 className="mb-2 font-medium text-slate-100">Follow-up Tasks</h4>
+                {customerDetailQuery.data.follow_up_tasks.length === 0 && <p className="text-slate-300">No follow-up tasks yet.</p>}
+                {customerDetailQuery.data.follow_up_tasks.length > 0 && (
+                  <ul className="space-y-2 text-slate-100">
+                    {customerDetailQuery.data.follow_up_tasks.map((task) => (
+                      <li key={task.id} className="rounded-lg border border-slate-700/70 bg-matte-800/65 p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-medium text-pink-100">Due {new Date(`${task.due_date}T00:00:00`).toLocaleDateString()}</p>
+                            <p className="text-xs uppercase tracking-wide text-slate-400">{formatClinicalValue(task.status)}</p>
+                            {task.notes && <p>Notes: {task.notes}</p>}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`${CRM_PATHS.visitWorkspace}/${task.visit_id}`)}
+                            className="rounded-md border border-pink-300/30 px-2 py-1 text-xs text-pink-100 hover:border-pink-200"
+                          >
+                            Continue Visit
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

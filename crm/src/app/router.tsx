@@ -62,6 +62,9 @@ const StaffManagementPage = lazy(() =>
 );
 
 const VendorsPage = lazy(() => import("@/pages/vendors/VendorsPage").then((module) => ({ default: module.VendorsPage })));
+const VisitWorkspacePage = lazy(() =>
+  import("@/pages/visits/VisitWorkspacePage").then((module) => ({ default: module.VisitWorkspacePage }))
+);
 
 const routeFallback = (
   <div className="rounded-xl border border-pink-300/25 bg-matte-850/90 px-4 py-6 text-sm text-slate-200 shadow-neon-ring">
@@ -97,6 +100,7 @@ export function AppRouter() {
       <Route path="/admin-register" element={<Navigate to={CRM_PATHS.adminRegister} replace />} />
       <Route path="/dashboard" element={<Navigate to={CRM_PATHS.dashboard} replace />} />
       <Route path="/customers/*" element={<LegacyCrmRedirect />} />
+      <Route path="/visits/*" element={<LegacyCrmRedirect />} />
       <Route path="/prescriptions/*" element={<LegacyCrmRedirect />} />
       <Route path="/vendors/*" element={<LegacyCrmRedirect />} />
       <Route path="/billing/*" element={<LegacyCrmRedirect />} />
@@ -124,6 +128,7 @@ export function AppRouter() {
 
         <Route path={CRM_PATHS.customers} element={renderLazyPage(<CustomersPage />)} />
         <Route path={CRM_PATHS.customerRecords} element={renderLazyPage(<CustomerRecordsPage />)} />
+        <Route path={`${CRM_PATHS.visitWorkspace}/:visitId`} element={renderLazyPage(<VisitWorkspacePage />)} />
 
         <Route path={CRM_PATHS.prescriptions} element={renderLazyPage(<PrescriptionsPage />)} />
         <Route path={CRM_PATHS.prescriptionRecords} element={renderLazyPage(<PrescriptionsRecordsPage />)} />
